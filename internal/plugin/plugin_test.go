@@ -37,11 +37,12 @@ func fakeConnect(t *testing.T) *httptest.Server {
 	}
 
 	mux.HandleFunc("GET /v1/vaults", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("filter") == `name eq "Prod"` {
+		switch r.URL.Query().Get("filter") {
+		case `name eq "Prod"`, "": // "" is the unfiltered list used by check
 			json.NewEncoder(w).Encode([]connect.Vault{{ID: vaultID, Name: "Prod"}})
-			return
+		default:
+			json.NewEncoder(w).Encode([]connect.Vault{})
 		}
-		json.NewEncoder(w).Encode([]connect.Vault{})
 	})
 	mux.HandleFunc("GET /v1/vaults/"+vaultID+"/items", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("filter") == `title eq "database"` {
@@ -304,6 +305,64 @@ func TestFetchErrorWhenNoCacheAndNoServer(t *testing.T) {
 	resp := runFetch(t, "op://Prod/database/password")
 	if resp.Error == "" {
 		t.Fatalf("expected error, got %v", resp.Result)
+	}
+}
+
+func TestFetchErrorNamesBackendAndConfig(t *testing.T) {
+	srv := fakeConnect(t)
+	setupEnv(t, srv.URL)
+
+	resp := runFetch(t, "op://Prod/database/nope")
+	for _, want := range []string{"backend: 1Password Connect", "config: agent environment", "onepassword check"} {
+		if !strings.Contains(resp.Error, want) {
+			t.Errorf("error %q should contain %q", resp.Error, want)
+		}
+	}
+}
+
+func TestCheckHappyPath(t *testing.T) {
+	srv := fakeConnect(t)
+	setupEnv(t, srv.URL)
+
+	var out bytes.Buffer
+	if code := Check(&out, "op://Prod/database/password"); code != 0 {
+		t.Fatalf("Check exit = %d\n%s", code, out.String())
+	}
+	s := out.String()
+	for _, want := range []string{"1 vault(s) visible: Prod", "keys: password, value", "backend: 1Password Connect"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("check output missing %q:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "hunter2") {
+		t.Fatal("check output must never contain secret values")
+	}
+}
+
+func TestCheckReportsMissingItemWithHint(t *testing.T) {
+	srv := fakeConnect(t)
+	setupEnv(t, srv.URL)
+
+	var out bytes.Buffer
+	if code := Check(&out, "op://Prod/ghost/password"); code == 0 {
+		t.Fatalf("Check should fail for a missing item\n%s", out.String())
+	}
+	s := out.String()
+	if !strings.Contains(s, "FAIL") || !strings.Contains(s, "hint:") {
+		t.Errorf("check output should FAIL with a hint:\n%s", s)
+	}
+}
+
+func TestCheckBadTokenFailsConnectivity(t *testing.T) {
+	setupEnv(t, "http://127.0.0.1:1")
+	t.Setenv("OP_REQUEST_TIMEOUT", "200ms")
+
+	var out bytes.Buffer
+	if code := Check(&out, ""); code == 0 {
+		t.Fatalf("Check should fail when the backend is unreachable\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "FAIL connectivity") {
+		t.Errorf("output:\n%s", out.String())
 	}
 }
 

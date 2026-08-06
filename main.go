@@ -22,7 +22,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fail("usage: onepassword <fingerprint|fetch> [path]")
+		fail("usage: onepassword <fingerprint|fetch|check> [path]")
 	}
 
 	switch os.Args[1] {
@@ -35,10 +35,18 @@ func main() {
 			fail("fetch requires a secret path, e.g. op://vault/item/field")
 		}
 		plugin.Fetch(os.Stdout, os.Stderr, os.Args[2])
+	case "check":
+		// Operator diagnostic, not called by Nomad: verifies this
+		// node's config, connectivity, and (optionally) a reference.
+		ref := ""
+		if len(os.Args) > 2 {
+			ref = os.Args[2]
+		}
+		os.Exit(plugin.Check(os.Stdout, ref))
 	case "version", "--version", "-v":
 		fmt.Println(plugin.Version)
 	default:
-		fail(fmt.Sprintf("unknown operation %q: expected fingerprint or fetch", os.Args[1]))
+		fail(fmt.Sprintf("unknown operation %q: expected fingerprint, fetch, or check", os.Args[1]))
 	}
 }
 

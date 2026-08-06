@@ -258,6 +258,57 @@ config if you always want a live read (stale fallback still applies).
 Note that changed secrets reach a task only when it is restarted or
 redeployed — Nomad resolves `secret` blocks at task start, not continuously.
 
+## Debugging
+
+When a secret can't be fetched, the task fails to start and Nomad surfaces
+the plugin's error as a **task event on the allocation** — in the UI under
+*Job → allocation → task → Events*, and on the CLI via `nomad alloc status
+<alloc-id>` or `nomad job status <job>` (recent events). Nomad then retries
+per the job's `restart`/`reschedule` policy, so a misconfigured secret shows
+up as a task cycling through restarts with the same event message.
+
+Error messages are written to be self-contained: they name the exact
+reference, what failed, and which backend and config file were active, e.g.
+
+```
+entry "db_password": resolving op://Production/database/password: no vault
+named "Production" is visible to this service account [backend: 1Password
+service account; config: /etc/nomad-secret-onepassword/config.env; try
+`onepassword check` on this node]
+```
+
+Distinct failures produce distinct messages: an invalid/expired token, a
+vault that doesn't exist *or isn't granted to the credential* (1Password
+can't distinguish these — both read "not visible"), a missing item or field,
+an ambiguous name, and network timeouts all say so explicitly.
+
+To dig deeper, run the diagnostic on the client node:
+
+```sh
+# verify config, backend, cache, connectivity, and token scope
+$ onepassword check
+onepassword secret provider v0.4.0 — diagnostic
+
+OK   config loaded from: /etc/nomad-secret-onepassword/config.env
+OK   backend: 1Password service account
+     request timeout 30s, cache TTL 5m0s, max stale 24h0m0s
+OK   cache: /var/cache/nomad-secret-onepassword
+OK   connectivity: 2 vault(s) visible: Infrastructure, Production
+
+# dry-run any reference (or a full multi-entry path) — prints the
+# interpolation keys that would be exposed, never the values
+$ onepassword check "op://Production/database"
+OK   op://Production/database → keys: host_name, password, username
+```
+
+On failure, `check` prints a `FAIL` line with a hint for the likely fix
+(wrong token, missing vault grant, exact-title mismatch, network) and exits
+non-zero, so it also works as a provisioning smoke test.
+
+Warnings that don't fail a fetch (stale cache served during an outage,
+unwritable cache directory) go to the plugin's stderr, which lands in the
+**Nomad client agent logs** on that node.
+
 ## Security notes
 
 - The plugin runs as the Nomad agent user (typically root). Tokens and the

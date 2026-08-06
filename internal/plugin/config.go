@@ -28,6 +28,7 @@ const DefaultCacheDir = "/var/cache/nomad-secret-onepassword"
 // only supply settings the operator left unset.
 func LoadConfig(paths []string, getenv func(string) string) (Config, error) {
 	fileVals := map[string]string{}
+	source := "agent environment"
 	for _, p := range paths {
 		vals, err := parseEnvFile(p)
 		if errors.Is(err, fs.ErrNotExist) {
@@ -37,6 +38,7 @@ func LoadConfig(paths []string, getenv func(string) string) (Config, error) {
 			return Config{}, fmt.Errorf("reading config file %s: %w", p, err)
 		}
 		fileVals = vals
+		source = p
 		break
 	}
 
@@ -53,6 +55,7 @@ func LoadConfig(paths []string, getenv func(string) string) (Config, error) {
 		Timeout:     30 * time.Second,
 		CacheTTL:    5 * time.Minute,
 		MaxStale:    24 * time.Hour,
+		Source:      source,
 	}
 
 	var err error

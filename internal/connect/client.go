@@ -78,6 +78,19 @@ type apiError struct {
 	Message string `json:"message"`
 }
 
+// ListVaults returns every vault visible to the Connect token.
+func (c *Client) ListVaults(ctx context.Context) ([]opitem.Vault, error) {
+	var vaults []Vault
+	if err := c.get(ctx, "/v1/vaults", nil, &vaults); err != nil {
+		return nil, fmt.Errorf("listing vaults: %w", err)
+	}
+	out := make([]opitem.Vault, 0, len(vaults))
+	for _, v := range vaults {
+		out = append(out, opitem.Vault{ID: v.ID, Name: v.Name})
+	}
+	return out, nil
+}
+
 // GetVault resolves a vault by ID or, failing that, by exact name.
 func (c *Client) GetVault(ctx context.Context, nameOrID string) (*opitem.Vault, error) {
 	if idPattern.MatchString(nameOrID) {

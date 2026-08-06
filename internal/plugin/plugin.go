@@ -28,11 +28,14 @@ import (
 type Source interface {
 	GetVault(ctx context.Context, nameOrID string) (*opitem.Vault, error)
 	GetItem(ctx context.Context, vaultID, nameOrID string) (*opitem.Item, error)
+	// ListVaults returns every vault the credentials can see; used by the
+	// check command to verify connectivity and token scope.
+	ListVaults(ctx context.Context) ([]opitem.Vault, error)
 }
 
 // Version is reported to Nomad in the fingerprint response and used to
 // register the plugin on each client node.
-const Version = "0.3.0"
+const Version = "0.4.0"
 
 // ConfigPaths are the host configuration files consulted in order; the first
 // one that exists wins. Values from the host file take precedence over
@@ -55,6 +58,20 @@ type Config struct {
 	CacheDir            string        // OP_CACHE_DIR
 	CacheTTL            time.Duration // OP_CACHE_TTL (default 5m, 0 disables)
 	MaxStale            time.Duration // OP_CACHE_MAX_STALE (default 24h, 0 disables fallback)
+
+	// Source records where the settings came from — the loaded config
+	// file path, or "agent environment" — so error messages can point
+	// operators at the right place.
+	Source string
+}
+
+// Describe names the active backend for error messages and diagnostics.
+// Tokens are never included.
+func (c Config) Describe() string {
+	if c.ServiceAccountToken != "" {
+		return "1Password service account"
+	}
+	return "1Password Connect at " + c.ConnectHost
 }
 
 // fetchResponse is the JSON shape Nomad expects on stdout for fetch.
@@ -116,7 +133,12 @@ func fetch(stderr io.Writer, path string) (map[string]string, error) {
 	for _, entry := range entries {
 		values, err := fetchOne(ctx, stderr, cfg, store, src, entry.Ref)
 		if err != nil {
-			return nil, err
+			if entry.Name != "" {
+				err = fmt.Errorf("entry %q: %w", entry.Name, err)
+			}
+			// This message becomes the Nomad task event the operator
+			// sees, so make it name the backend and config source.
+			return nil, fmt.Errorf("%w [backend: %s; config: %s; try `onepassword check` on this node]", err, cfg.Describe(), cfg.Source)
 		}
 
 		switch {
@@ -181,6 +203,13 @@ func (l *lazyServiceAccount) GetItem(ctx context.Context, vaultID, nameOrID stri
 		return nil, err
 	}
 	return l.src.GetItem(ctx, vaultID, nameOrID)
+}
+
+func (l *lazyServiceAccount) ListVaults(ctx context.Context) ([]opitem.Vault, error) {
+	if err := l.ensure(ctx); err != nil {
+		return nil, err
+	}
+	return l.src.ListVaults(ctx)
 }
 
 // fetchOne resolves a single reference through the cache: fresh cache hit,

@@ -33,6 +33,19 @@ func New(ctx context.Context, token, integrationVersion string) (*Source, error)
 	return &Source{client: client}, nil
 }
 
+// ListVaults returns every vault the service account is granted.
+func (s *Source) ListVaults(ctx context.Context) ([]opitem.Vault, error) {
+	overviews, err := s.client.Vaults().List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing vaults: %w", err)
+	}
+	out := make([]opitem.Vault, 0, len(overviews))
+	for _, v := range overviews {
+		out = append(out, opitem.Vault{ID: v.ID, Name: v.Title})
+	}
+	return out, nil
+}
+
 // GetVault resolves a vault by ID or exact title among the vaults the
 // service account is granted.
 func (s *Source) GetVault(ctx context.Context, nameOrID string) (*opitem.Vault, error) {
