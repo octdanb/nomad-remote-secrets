@@ -39,18 +39,36 @@ systemctl enable --now nomad
 # -------------------------------------------------------------------- Traefik
 %{ if enable_traefik ~}
 # Runtime static config (merges over the baked static.env).
+umask 077
 cat > /etc/traefik/traefik.env <<'EOT'
 TRAEFIK_PROVIDERS_FILE_DIRECTORY=/etc/traefik/dynamic
 TRAEFIK_PROVIDERS_FILE_WATCH=true
 TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_EMAIL=${traefik_acme_email}
 TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_STORAGE=/etc/traefik/acme.json
-TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_HTTPCHALLENGE=true
-TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_HTTPCHALLENGE_ENTRYPOINT=web
 %{ if traefik_dashboard_users != "" ~}
 TRAEFIK_API_DASHBOARD=true
 %{ endif ~}
 EOT
+%{ if traefik_acme_challenge == "dns" ~}
+# DNS-01 via Cloudflare: works with proxied records and needs no inbound
+# port 80. The API token is seeded in the cluster vault before apply.
+cf_token=$(/opt/nomad/plugins/secrets/onepassword fetch "${cloudflare_token_ref}" | jq -r '.result.value // empty')
+if [ -z "$cf_token" ]; then
+  echo "WARNING: ${cloudflare_token_ref} not found — ACME DNS-01 will fail until it exists and traefik restarts" >&2
+fi
+cat >> /etc/traefik/traefik.env <<EOT
+TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_DNSCHALLENGE=true
+TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_DNSCHALLENGE_PROVIDER=cloudflare
+CF_DNS_API_TOKEN=$cf_token
+EOT
+%{ else ~}
+cat >> /etc/traefik/traefik.env <<'EOT'
+TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_HTTPCHALLENGE=true
+TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_HTTPCHALLENGE_ENTRYPOINT=web
+EOT
+%{ endif ~}
 chmod 0600 /etc/traefik/traefik.env
+umask 022
 
 # Routes that need no Nomad ACL token: the Nomad UI is plain reverse
 # proxying (the browser authenticates itself to Nomad), and the dashboard

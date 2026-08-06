@@ -31,8 +31,10 @@ resource "aws_launch_template" "pool" {
     enable_traefik          = each.value.ingress
     fqdn_base               = local.fqdn_base
     traefik_acme_email      = var.traefik_acme_email
+    traefik_acme_challenge  = var.traefik_acme_challenge
     traefik_dashboard_users = var.traefik_dashboard_users
     traefik_token_ref       = local.traefik_token_ref
+    cloudflare_token_ref    = local.cloudflare_token_ref
   }))
 
   tag_specifications {

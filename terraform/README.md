@@ -3,16 +3,18 @@
 Provisions a complete Nomad cluster environment in AWS from one tfvars file:
 server + node-pool ASGs on the golden AMI, an ingress NLB with
 `nomad.<app>.<env>.octave.nz` / `traefik.<app>.<env>.octave.nz` / wildcard
-DNS, ECR repositories, and an optional S3 + CloudFront static site. Secrets
-flow through 1Password + SSM — nothing sensitive lands in user data or
-Terraform state.
+DNS in **Cloudflare**, ECR repositories, and an optional S3 + CloudFront
+static site. Secrets flow through 1Password + SSM — nothing sensitive lands
+in user data or Terraform state.
 
 ## The order of operations (and why there's no chicken-and-egg)
 
 ```
 1. packer build              → golden AMI (once per image version)
 2. scripts/op-bootstrap.sh   → 1Password vault + service account → token in SSM
+   + op item create cloudflare-dns-token → ACME DNS-01 credential in the vault
 3. terraform apply           → cluster up; Nomad UI + Traefik live immediately
+   (CLOUDFLARE_API_TOKEN in the environment for the provider)
 4. ansible cluster-acl.yml   → ACL bootstrap + policies + Traefik token
 5. op item create            → token into the vault; ingress nodes
                                self-install it within ~1 minute
@@ -39,11 +41,15 @@ concerns need different credentials:
 ## Walkthrough
 
 ```sh
-# 2. One-time per cluster: vault, service account, token → SSM
+# 2. One-time per cluster: vault, service account, token → SSM,
+#    plus the ACME DNS-01 credential
 ./scripts/op-bootstrap.sh smspit prod
+op item create --category password --vault smspit-prod \
+  --title cloudflare-dns-token password='<cf token with Zone:DNS:Edit>'
 
 # 3. Infrastructure
 cp terraform.tfvars.example terraform.tfvars   # edit
+export CLOUDFLARE_API_TOKEN='<token for the terraform provider>'
 terraform init && terraform apply
 
 # 4-5. ACLs (see the `next_step` output)
@@ -65,6 +71,7 @@ routes them with automatic ACME certificates.
 | op service-account token | SSM SecureString | instance profile reads it at boot; never in user data/state |
 | Nomad management token | 1Password (manual store at bootstrap) | operators only |
 | Traefik's Nomad token | 1Password item `nomad-traefik-token` | ingress nodes poll + self-install |
+| Cloudflare DNS token (ACME) | 1Password item `cloudflare-dns-token` | ingress nodes fetch at boot |
 | App secrets | 1Password vault `<app>-<env>` | `secret {}` blocks via the plugin |
 
 The service account is scoped **read-only to the one cluster vault**, so a
@@ -84,12 +91,22 @@ the previous version in the filter.
   hardcoded here.
 - **Sub-org accounts**: run this stack in each workload account; the AMI is
   shared org-wide from the images account (`ami_owner_account_id`).
-- **ACME**: Traefik uses HTTP-01 via the NLB on port 80, so certificates
-  need the hostnames publicly resolvable. For internal-only clusters,
-  switch to DNS-01 with a Route53-scoped credential.
+- **Cloudflare records are DNS-only (grey cloud) by default.** Universal
+  SSL covers just one subdomain level, so proxying
+  `nomad.<app>.<env>.octave.nz` through Cloudflare would serve an invalid
+  edge certificate unless the zone has Advanced Certificate Manager /
+  Total TLS. With DNS-only records Traefik terminates TLS itself via ACME.
+  If you do enable `cloudflare_proxied` (with ACM), keep the ACME challenge
+  on `dns` — HTTP-01 doesn't work behind the proxy.
+- **ACME**: DNS-01 via Cloudflare is the default (`traefik_acme_challenge`)
+  — it works proxied or internal, and needs no inbound port 80; it requires
+  the `cloudflare-dns-token` vault item at instance boot. `http` challenge
+  remains available for zones where a DNS credential is undesirable.
 - **UI access**: `nomad.<app>.<env>` is public-by-DNS but deny-by-default —
   ACLs gate everything. Tighten `ingress_allowed_cidrs` to office/VPN
-  ranges for network-level restriction too.
+  ranges for network-level restriction too (with proxied records, use
+  Cloudflare Access/WAF rules instead, since origin traffic then comes from
+  Cloudflare IPs).
 - **ECR**: repositories are created as `<app>-<env>/<name>`; Nomad's docker
   driver authenticates via the instance role (`ecr:GetAuthorizationToken`) —
   use `docker.config { auth { helper = "ecr-login" } }` or task-level

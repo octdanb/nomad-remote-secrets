@@ -50,6 +50,12 @@ aws ssm put-parameter --region "$REGION" --name "$PARAM" \
 
 echo "stored token in SSM: $PARAM"
 echo
-echo "Next: terraform apply, then run ansible/cluster-acl.yml and store the"
-echo "minted Traefik token in this vault as item 'nomad-traefik-token'"
-echo "(password field) so ingress nodes pick it up automatically."
+echo "Next:"
+echo "  1. (DNS-01 ACME, the default) seed a Cloudflare API token with"
+echo "     Zone:DNS:Edit into the vault:"
+echo "       op item create --category password --vault $VAULT \\"
+echo "         --title cloudflare-dns-token password='<cf token>'"
+echo "  2. terraform apply"
+echo "  3. run ansible/cluster-acl.yml and store the minted Traefik token in"
+echo "     this vault as item 'nomad-traefik-token' (password field) —"
+echo "     ingress nodes pick it up automatically."

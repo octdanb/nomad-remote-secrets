@@ -10,6 +10,11 @@ vpc_id             = "vpc-0123456789abcdef0"
 private_subnet_ids = ["subnet-aaa", "subnet-bbb", "subnet-ccc"]
 public_subnet_ids  = ["subnet-ddd", "subnet-eee", "subnet-fff"]
 
+# DNS — Cloudflare manages the zone. The provider authenticates via the
+# CLOUDFLARE_API_TOKEN environment variable (DNS:Edit scope on the zone).
+cloudflare_zone_id = "023e105f4ecef8ad9ca31a8372d0c353"
+# cloudflare_proxied = false   # keep DNS-only unless the zone has ACM/Total TLS
+
 # Golden AMI (built by packer/, shared from the images account).
 ami_owner_account_id = "111111111111"
 ami_name_filter      = "nomad-client-1.0.*-amd64-*" # pin minor, float patch
@@ -21,8 +26,12 @@ node_pools = {
   ingress = { instance_type = "t3.small", min_size = 1, max_size = 2, desired = 1, ingress = true }
 }
 
-# Traefik.
+# Traefik. ACME uses DNS-01 through Cloudflare by default — seed a
+# Cloudflare API token (Zone:DNS:Edit) into the cluster vault first:
+#   op item create --category password --vault smspit-prod \
+#     --title cloudflare-dns-token password='<cf token>'
 traefik_acme_email = "platform@octave.nz"
+# traefik_acme_challenge = "http"   # alternative: needs public port 80 + DNS-only records
 # htpasswd -nB admin   (empty string disables the dashboard route)
 traefik_dashboard_users = "admin:$2y$05$..."
 

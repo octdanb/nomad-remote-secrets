@@ -16,8 +16,25 @@ variable "region" {
 
 variable "dns_zone_name" {
   type        = string
-  description = "Existing public Route53 zone, e.g. octave.nz."
+  description = "DNS zone the hostnames live under (managed in Cloudflare), e.g. octave.nz."
   default     = "octave.nz"
+}
+
+variable "cloudflare_zone_id" {
+  type        = string
+  description = "Cloudflare zone ID for dns_zone_name (Cloudflare dashboard → zone → API section). The provider itself authenticates via the CLOUDFLARE_API_TOKEN environment variable."
+}
+
+variable "cloudflare_proxied" {
+  type        = bool
+  default     = false
+  description = <<-EOT
+    Proxy the cluster hostnames through Cloudflare (orange cloud). Leave
+    false unless the zone has Advanced Certificate Manager / Total TLS:
+    Universal SSL only covers one subdomain level, so proxied
+    nomad.<app>.<env>.<zone> would serve an invalid edge certificate.
+    DNS-only records let Traefik terminate TLS with its own ACME certs.
+  EOT
 }
 
 # ------------------------------------------------------------------- Network
@@ -108,6 +125,24 @@ variable "op_vault_name" {
 variable "traefik_acme_email" {
   type        = string
   description = "Email for Let's Encrypt registration (Traefik ACME)."
+}
+
+variable "traefik_acme_challenge" {
+  type        = string
+  default     = "dns"
+  description = <<-EOT
+    ACME challenge type. "dns" (recommended with Cloudflare) needs a
+    Cloudflare API token with DNS-edit on the zone, stored in the cluster's
+    1Password vault as item `cloudflare-dns-token` (password field) BEFORE
+    terraform apply; it works with proxied records and internal-only
+    clusters. "http" needs the hostnames publicly resolvable and port 80
+    reachable, and the records DNS-only.
+  EOT
+
+  validation {
+    condition     = contains(["dns", "http"], var.traefik_acme_challenge)
+    error_message = "The traefik_acme_challenge value must be \"dns\" or \"http\"."
+  }
 }
 
 variable "traefik_dashboard_users" {
