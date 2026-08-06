@@ -25,7 +25,7 @@ import (
 
 // Version is reported to Nomad in the fingerprint response and used to
 // register the plugin on each client node.
-const Version = "0.1.0"
+const Version = "0.2.0"
 
 // ConfigPaths are the host configuration files consulted in order; the first
 // one that exists wins. Values from the host file take precedence over
@@ -75,7 +75,7 @@ func Fetch(stdout, stderr io.Writer, path string) {
 }
 
 func fetch(stderr io.Writer, path string) (map[string]string, error) {
-	ref, err := opref.Parse(path)
+	entries, err := opref.ParseAll(path)
 	if err != nil {
 		return nil, err
 	}
@@ -84,12 +84,6 @@ func fetch(stderr io.Writer, path string) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	// The cache key includes the Connect host and a digest of the token so
-	// entries are never shared across servers or across tokens with
-	// different vault access.
-	tokenSum := sha256.Sum256([]byte(cfg.Token))
-	cacheKey := cfg.ConnectHost + "|" + hex.EncodeToString(tokenSum[:8]) + "|" + ref.String()
 
 	var store *cache.Cache
 	if cfg.CacheDir != "" {
@@ -102,6 +96,47 @@ func fetch(stderr io.Writer, path string) (map[string]string, error) {
 		}
 	}
 
+	// One deadline covers all references so the plugin stays inside
+	// Nomad's 60-second kill window regardless of entry count.
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
+	defer cancel()
+	client := connect.New(cfg.ConnectHost, cfg.Token, cfg.Timeout)
+
+	merged := map[string]string{}
+	for _, entry := range entries {
+		values, err := fetchOne(ctx, stderr, cfg, store, client, entry.Ref)
+		if err != nil {
+			return nil, err
+		}
+
+		switch {
+		case entry.Name == "":
+			// Bare single reference: keep the flat key set
+			// ("value" plus field/label keys).
+			return values, nil
+		case entry.Ref.WholeItem():
+			// Named whole item: prefix every field with the name,
+			// e.g. twilio_username, twilio_password.
+			for k, v := range values {
+				merged[entry.Name+"_"+k] = v
+			}
+		default:
+			merged[entry.Name] = values["value"]
+		}
+	}
+	return merged, nil
+}
+
+// fetchOne resolves a single reference through the cache: fresh cache hit,
+// then a live Connect fetch, then — if Connect is unreachable — a stale
+// cache entry within the configured age bound.
+func fetchOne(ctx context.Context, stderr io.Writer, cfg Config, store *cache.Cache, client *connect.Client, ref opref.Ref) (map[string]string, error) {
+	// The cache key includes the Connect host and a digest of the token so
+	// entries are never shared across servers or across tokens with
+	// different vault access.
+	tokenSum := sha256.Sum256([]byte(cfg.Token))
+	cacheKey := cfg.ConnectHost + "|" + hex.EncodeToString(tokenSum[:8]) + "|" + ref.String()
+
 	// OTP codes rotate every 30 seconds; serving them from cache would
 	// hand out expired codes.
 	cacheable := ref.Attribute != "otp"
@@ -112,10 +147,7 @@ func fetch(stderr io.Writer, path string) (map[string]string, error) {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
-	defer cancel()
-
-	values, err := resolve(ctx, connect.New(cfg.ConnectHost, cfg.Token, cfg.Timeout), ref)
+	values, err := resolve(ctx, client, ref)
 	if err != nil {
 		if store != nil && cacheable && cfg.MaxStale > 0 {
 			if stale, age, ok := store.Stale(cacheKey, cfg.MaxStale); ok {

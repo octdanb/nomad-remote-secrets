@@ -160,6 +160,70 @@ func TestFetchWholeItem(t *testing.T) {
 	}
 }
 
+func TestFetchMultipleNamedReferences(t *testing.T) {
+	srv := fakeConnect(t)
+	setupEnv(t, srv.URL)
+
+	resp := runFetch(t, `
+		# everything the app needs, one secret block
+		db_password = op://Prod/database/password
+		db_user     = op://Prod/database/username
+		db          = op://Prod/database
+	`)
+	if resp.Error != "" {
+		t.Fatalf("unexpected error: %s", resp.Error)
+	}
+	want := map[string]string{
+		"db_password": "hunter2",
+		"db_user":     "app",
+		// whole-item entry: fields prefixed with the entry name
+		"db_username":         "app",
+		"db_host_name":        "db.internal",
+		"db_replica_password": "replica-pass",
+	}
+	for k, v := range want {
+		if resp.Result[k] != v {
+			t.Errorf("result[%q] = %q, want %q (full: %v)", k, resp.Result[k], v, resp.Result)
+		}
+	}
+}
+
+func TestFetchMultiFailsClosed(t *testing.T) {
+	srv := fakeConnect(t)
+	setupEnv(t, srv.URL)
+
+	// One bad entry must fail the whole fetch — a task must never start
+	// with only some of its secrets resolved.
+	resp := runFetch(t, "good = op://Prod/database/password\nbad = op://Prod/database/nope")
+	if resp.Error == "" || !strings.Contains(resp.Error, `no field "nope"`) {
+		t.Fatalf("error = %q, want missing-field message", resp.Error)
+	}
+	if len(resp.Result) != 0 {
+		t.Fatalf("result must be empty on error, got %v", resp.Result)
+	}
+}
+
+func TestFetchMultiSharesCache(t *testing.T) {
+	srv := fakeConnect(t)
+	setupEnv(t, srv.URL)
+
+	first := runFetch(t, "op://Prod/database/password")
+	if first.Error != "" {
+		t.Fatal(first.Error)
+	}
+
+	// The same reference inside a multi-entry path must be served from
+	// the cache written by the bare fetch above.
+	srv.Close()
+	resp := runFetch(t, "pw = op://Prod/database/password")
+	if resp.Error != "" {
+		t.Fatalf("cached multi fetch failed: %s", resp.Error)
+	}
+	if resp.Result["pw"] != "hunter2" {
+		t.Fatalf("result = %v", resp.Result)
+	}
+}
+
 func TestFetchOTPAttribute(t *testing.T) {
 	srv := fakeConnect(t)
 	setupEnv(t, srv.URL)

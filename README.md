@@ -124,6 +124,41 @@ Details:
 - Percent-encoded segments (`My%20Vault`) are decoded; literal spaces also
   work.
 
+### Multiple secrets in one block
+
+Nomad's `secret` block takes a single `path`, but the plugin accepts a list
+of named references in it — one `name = op://...` per line (an HCL heredoc
+keeps it readable):
+
+```hcl
+secret "app" {
+  provider = "onepassword"
+  path     = <<-EOF
+    # one line per secret: <name> = <reference>
+    db_password = op://Production/database/password
+    api_key     = op://Production/api/credential
+    twilio      = op://Production/twilio-prod
+  EOF
+}
+
+env {
+  DB_PASSWORD        = "${secret.app.db_password}"
+  API_KEY            = "${secret.app.api_key}"
+  TWILIO_ACCOUNT_SID = "${secret.app.twilio_username}"
+  TWILIO_AUTH_TOKEN  = "${secret.app.twilio_password}"
+}
+```
+
+- Single-field entries are exposed under their name; whole-item entries
+  expose every field prefixed with the name (`twilio` → `twilio_username`,
+  `twilio_password`, ...).
+- Names may contain letters, digits, and underscores; `#` lines are
+  comments. Entries may also be comma-separated on one line.
+- The fetch fails closed: if any one reference can't be resolved, the whole
+  block errors and the task doesn't start with a partial secret set.
+- Each reference is cached individually, so entries shared between blocks
+  or jobs hit the same cache.
+
 See [examples/smspit.nomad.hcl](examples/smspit.nomad.hcl) for a complete job.
 
 `secret` blocks can sit at the job, group, or task level; task level keeps a

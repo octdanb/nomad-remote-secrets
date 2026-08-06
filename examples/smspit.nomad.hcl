@@ -18,20 +18,25 @@ job "smspit" {
     task "smspit" {
       driver = "docker"
 
-      # A single field: op://<vault>/<item>/<field>.
-      # Exposed as ${secret.dashboard.value} (and ${secret.dashboard.<field>}).
-      secret "dashboard" {
+      # Several secrets in one block: one "name = reference" per line.
+      # Single-field entries are exposed under their name; whole-item
+      # entries (like twilio) expose every field prefixed with the name.
+      secret "app" {
         provider = "onepassword"
-        path     = "op://Infrastructure/smspit/dashboard_token"
+        path     = <<-EOF
+          dashboard_token = op://Infrastructure/smspit/dashboard_token
+          twilio          = op://Infrastructure/twilio-prod
+        EOF
       }
 
-      # A whole item: op://<vault>/<item> — every non-empty field becomes a
-      # key, e.g. ${secret.twilio.username} / ${secret.twilio.password}, plus
-      # any custom fields by their (sanitized) label.
-      secret "twilio" {
-        provider = "onepassword"
-        path     = "op://Infrastructure/twilio-prod"
-      }
+      # The one-block-per-secret form works too:
+      #
+      #   secret "dashboard" {
+      #     provider = "onepassword"
+      #     path     = "op://Infrastructure/smspit/dashboard_token"
+      #   }
+      #
+      # exposing ${secret.dashboard.value}.
 
       config {
         image = "ghcr.io/octdanb/octavenz-smspit:latest"
@@ -39,9 +44,9 @@ job "smspit" {
       }
 
       env {
-        SMSPIT_DASHBOARD_TOKEN = "${secret.dashboard.value}"
-        TWILIO_ACCOUNT_SID     = "${secret.twilio.username}"
-        TWILIO_AUTH_TOKEN      = "${secret.twilio.password}"
+        SMSPIT_DASHBOARD_TOKEN = "${secret.app.dashboard_token}"
+        TWILIO_ACCOUNT_SID     = "${secret.app.twilio_username}"
+        TWILIO_AUTH_TOKEN      = "${secret.app.twilio_password}"
       }
 
       resources {
