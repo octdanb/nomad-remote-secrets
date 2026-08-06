@@ -63,6 +63,11 @@ env {                     ├─ written to on-disk cache
 
 ## Installation
 
+> Building AWS infrastructure? [packer/](packer/) ships a versioned,
+> org-shareable Ubuntu AMI (ap-southeast-2) with Nomad, Docker, this plugin,
+> and optional Traefik preinstalled — credentials and node-pool settings are
+> injected at instance launch. The steps below cover manual installation.
+
 1. Build the binary (Go 1.24+):
 
    ```sh

@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# First-boot configuration for the nomad-client AMI, rendered by Terraform's
+# templatefile() (see usage below). The AMI ships Nomad, Docker, the
+# onepassword plugin, and Traefik installed but UNCONFIGURED — this script
+# injects everything environment-specific and then starts the services.
+#
+# Terraform usage:
+#
+#   user_data = templatefile("${path.module}/user-data.sh.tftpl", {
+#     datacenter               = "ap-southeast-2a"
+#     region                   = "apse2"
+#     node_pool                = "general"          # any name; pools auto-create on registration
+#     node_class               = "default"
+#     server_join_tag_key      = "NomadRole"
+#     server_join_tag_value    = "server"
+#     op_service_account_token = var.op_service_account_token  # sensitive
+#     op_cache_ttl             = "5m"
+#     enable_traefik           = false
+#     traefik_env              = ""                  # extra TRAEFIK_* lines
+#     nomad_extra_hcl          = ""                  # appended verbatim to runtime.hcl
+#   })
+#
+# The token typically comes from a 1Password item itself via the Terraform
+# onepassword provider, or from SSM/Secrets Manager — never from source
+# control.
+
+set -euo pipefail
+exec > >(tee /var/log/user-data.log | logger -t user-data) 2>&1
+
+# ------------------------------------------------------------------ 1Password
+install -d -m 0700 /etc/nomad-secret-onepassword
+umask 077
+cat > /etc/nomad-secret-onepassword/token <<'EOT'
+${op_service_account_token}
+EOT
+cat > /etc/nomad-secret-onepassword/config.env <<'EOT'
+OP_SERVICE_ACCOUNT_TOKEN_FILE=/etc/nomad-secret-onepassword/token
+OP_CACHE_TTL=${op_cache_ttl}
+EOT
+umask 022
+
+# Fail fast (visibly, in this log) if the credentials or scope are wrong.
+/opt/nomad/plugins/secrets/onepassword check || echo "WARNING: onepassword check failed — secrets will not resolve until fixed"
+
+# ---------------------------------------------------------------------- Nomad
+cat > /etc/nomad.d/runtime.hcl <<'EOT'
+datacenter = "${datacenter}"
+region     = "${region}"
+
+client {
+  node_pool  = "${node_pool}"
+  node_class = "${node_class}"
+
+  server_join {
+    # Requires ec2:DescribeInstances on the node's instance profile and the
+    # matching tag on the Nomad servers.
+    retry_join = ["provider=aws tag_key=${server_join_tag_key} tag_value=${server_join_tag_value}"]
+  }
+}
+
+${nomad_extra_hcl}
+EOT
+
+systemctl enable --now nomad
+
+# -------------------------------------------------------------------- Traefik
+%{ if enable_traefik }
+cat > /etc/traefik/traefik.env <<'EOT'
+${traefik_env}
+EOT
+chmod 0600 /etc/traefik/traefik.env
+systemctl enable --now traefik
+%{ endif }
+
+echo "user-data: node configured (pool=${node_pool}, dc=${datacenter}, traefik=${enable_traefik})"

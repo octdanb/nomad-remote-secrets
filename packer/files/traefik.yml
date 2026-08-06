@@ -1,0 +1,26 @@
+# Baked Traefik static configuration. Environment-specific values (ACME
+# email, dashboard auth, extra entrypoints) belong in /etc/traefik/traefik.env
+# or a runtime-written override — user data decides whether this service is
+# enabled at all.
+
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+
+providers:
+  # Discover services from the local Nomad agent: any Nomad service
+  # registered with traefik.enable=true tags is picked up automatically.
+  nomad:
+    endpoint:
+      address: "http://127.0.0.1:4646"
+    exposedByDefault: false
+
+api:
+  dashboard: false
+
+log:
+  level: INFO
+
+accessLog: {}

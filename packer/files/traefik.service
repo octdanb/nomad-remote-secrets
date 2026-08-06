@@ -1,0 +1,24 @@
+[Unit]
+Description=Traefik edge proxy
+Documentation=https://doc.traefik.io/traefik/
+After=network-online.target nomad.service
+Wants=network-online.target
+
+[Service]
+Type=notify
+# Optional per-instance settings (written by user data), e.g.
+# TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_TLS_CERTRESOLVER=le
+EnvironmentFile=-/etc/traefik/traefik.env
+ExecStart=/usr/local/bin/traefik --configfile=/etc/traefik/traefik.yml
+Restart=on-failure
+RestartSec=5
+
+# Traefik only needs to bind low ports; keep the rest locked down.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

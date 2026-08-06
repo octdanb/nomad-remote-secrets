@@ -1,2 +1,5 @@
 /bin/
 *.test
+packer/manifest.json
+packer/packer_cache/
+crash.log
