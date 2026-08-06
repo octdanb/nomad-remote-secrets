@@ -3,8 +3,6 @@
 # leftover build files.
 set -euo pipefail
 
-rm -rf /tmp/image-files /tmp/onepassword
-
 apt-get -y autoremove --purge
 apt-get -y clean
 

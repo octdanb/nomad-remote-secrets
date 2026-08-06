@@ -1,0 +1,11 @@
+traefik_version: "3.5.2"
+
+# Static configuration baked as environment variables (Traefik does not
+# merge static-config sources, so a YAML file could not have its Nomad ACL
+# token injected at boot — env vars from a second EnvironmentFile can).
+traefik_log_level: INFO
+traefik_nomad_endpoint: http://127.0.0.1:4646
+
+# Installed but disabled by default; AMI instances enable it from user
+# data, bare-metal hosts set this true.
+traefik_service_enabled: false

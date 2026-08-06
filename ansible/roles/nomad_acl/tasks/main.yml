@@ -1,0 +1,104 @@
+# Bootstraps ACLs if the cluster is fresh, then idempotently applies
+# policies and creates any missing long-lived tokens. Runs against the HTTP
+# API from the control machine — nothing is installed anywhere.
+
+- name: Attempt ACL bootstrap
+  ansible.builtin.uri:
+    url: "{{ nomad_addr }}/v1/acl/bootstrap"
+    method: POST
+    status_code: [200, 400, 403, 500]
+    return_content: true
+  register: acl_bootstrap
+
+- name: Use the freshly bootstrapped management token
+  ansible.builtin.set_fact:
+    mgmt_token: "{{ acl_bootstrap.json.SecretID }}"
+    bootstrapped_now: true
+  when: acl_bootstrap.status == 200
+  no_log: true
+
+- name: Use the provided management token (cluster already bootstrapped)
+  ansible.builtin.set_fact:
+    mgmt_token: "{{ nomad_mgmt_token }}"
+    bootstrapped_now: false
+  when: acl_bootstrap.status != 200
+  no_log: true
+
+- name: A management token is required for an already-bootstrapped cluster
+  ansible.builtin.assert:
+    that: mgmt_token | length > 0
+    fail_msg: >-
+      ACLs are already bootstrapped ({{ acl_bootstrap.status }}:
+      {{ acl_bootstrap.content | default('') | trim }}). Re-run with the
+      management token in NOMAD_TOKEN (it should be in 1Password).
+
+# Printed exactly once, on the run that bootstraps. If this is lost before
+# it is stored, recovery requires an acl bootstrap reset on a server node.
+- name: STORE THE MANAGEMENT TOKEN IN 1PASSWORD NOW
+  ansible.builtin.debug:
+    msg:
+      - "ACL bootstrap complete. This management token is shown ONCE:"
+      - "  Accessor: {{ acl_bootstrap.json.AccessorID }}"
+      - "  Secret:   {{ acl_bootstrap.json.SecretID }}"
+      - "Store it now, e.g.:"
+      - "  op item create --category password --vault Infrastructure --title nomad-management-token password='<secret>'"
+  when: bootstrapped_now
+
+- name: Apply ACL policies
+  ansible.builtin.uri:
+    url: "{{ nomad_addr }}/v1/acl/policy/{{ item.name }}"
+    method: POST
+    headers:
+      X-Nomad-Token: "{{ mgmt_token }}"
+    body_format: json
+    body:
+      Name: "{{ item.name }}"
+      Description: "{{ item.description }}"
+      Rules: "{{ lookup('ansible.builtin.file', item.file) }}"
+    status_code: 200
+  loop: "{{ nomad_acl_policies }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+- name: List existing tokens
+  ansible.builtin.uri:
+    url: "{{ nomad_addr }}/v1/acl/tokens"
+    headers:
+      X-Nomad-Token: "{{ mgmt_token }}"
+    return_content: true
+  register: existing_tokens
+  no_log: true
+
+- name: Create missing tokens
+  ansible.builtin.uri:
+    url: "{{ nomad_addr }}/v1/acl/token"
+    method: POST
+    headers:
+      X-Nomad-Token: "{{ mgmt_token }}"
+    body_format: json
+    body:
+      Name: "{{ item.name }}"
+      Type: client
+      Policies: "{{ item.policies }}"
+      Global: false
+    status_code: 200
+    return_content: true
+  loop: "{{ nomad_acl_tokens }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.name not in (existing_tokens.json | map(attribute='Name') | list)
+  register: created_tokens
+  no_log: true
+
+- name: STORE NEW TOKENS IN 1PASSWORD NOW
+  ansible.builtin.debug:
+    msg:
+      - "Created token {{ item.json.Name }} (shown ONCE):"
+      - "  Accessor: {{ item.json.AccessorID }}"
+      - "  Secret:   {{ item.json.SecretID }}"
+      - "Store it, e.g.:"
+      - "  op item create --category password --vault Infrastructure --title {{ item.json.Name }} password='<secret>'"
+  loop: "{{ created_tokens.results | default([]) | selectattr('json', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.json.Name }}"

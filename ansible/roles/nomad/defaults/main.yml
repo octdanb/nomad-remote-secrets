@@ -1,0 +1,13 @@
+nomad_version: "1.11.0" # must be >= 1.11.0 for secret provider plugins
+nomad_data_dir: /opt/nomad/data
+nomad_plugin_dir: /opt/nomad/plugins
+
+# ACLs are enabled on every agent. The cluster still needs a one-time
+# `ansible-playbook cluster-acl.yml` bootstrap (see ansible/README section
+# in packer/README.md); until then unauthenticated requests are denied.
+nomad_acl_enabled: true
+
+# Images ship with the service disabled — first-boot user data writes
+# /etc/nomad.d/runtime.hcl and enables it. On bare metal, lay down your
+# runtime config and set this true.
+nomad_service_enabled: false

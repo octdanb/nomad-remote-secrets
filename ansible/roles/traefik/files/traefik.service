@@ -6,10 +6,11 @@ Wants=network-online.target
 
 [Service]
 Type=notify
-# Optional per-instance settings (written by user data), e.g.
-# TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_TLS_CERTRESOLVER=le
+# Baked static configuration, then host/instance-specific overrides
+# (Nomad ACL token, ACME email, dashboard settings, ...).
+EnvironmentFile=/etc/traefik/static.env
 EnvironmentFile=-/etc/traefik/traefik.env
-ExecStart=/usr/local/bin/traefik --configfile=/etc/traefik/traefik.yml
+ExecStart=/usr/local/bin/traefik
 Restart=on-failure
 RestartSec=5
 

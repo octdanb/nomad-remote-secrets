@@ -1,0 +1,31 @@
+# {{ ansible_managed }}
+# Environment-independent Nomad client configuration. Everything
+# environment-specific (datacenter, node_pool, server join, node meta)
+# belongs in /etc/nomad.d/runtime.hcl — written by cloud-init user data on
+# AMI instances, or by your host provisioning on bare metal.
+
+data_dir  = "{{ nomad_data_dir }}"
+bind_addr = "0.0.0.0"
+
+acl {
+  enabled = {{ 'true' if nomad_acl_enabled else 'false' }}
+}
+
+client {
+  enabled = true
+
+  # Secret provider plugins (onepassword) live in <dir>/secrets/.
+  common_plugin_dir = "{{ nomad_plugin_dir }}"
+}
+
+plugin "docker" {
+  config {
+    allow_privileged = false
+  }
+}
+
+telemetry {
+  prometheus_metrics         = true
+  publish_allocation_metrics = true
+  publish_node_metrics       = true
+}

@@ -1,0 +1,19 @@
+# Base packages and time sync common to every node.
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+      - unzip
+      - jq
+      - chrony
+      - unattended-upgrades
+    state: present
+    update_cache: true
+    cache_valid_time: 600
+
+- name: Enable time synchronisation
+  ansible.builtin.systemd_service:
+    name: chrony
+    enabled: true

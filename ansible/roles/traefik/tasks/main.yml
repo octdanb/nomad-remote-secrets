@@ -1,0 +1,43 @@
+# Traefik as a host service, installed but disabled by default. It reads
+# its static configuration from environment variables:
+#   /etc/traefik/static.env  — baked here, environment-independent
+#   /etc/traefik/traefik.env — written at boot/provision time: the Nomad
+#                              ACL token, ACME settings, etc.
+- name: Check installed Traefik version
+  ansible.builtin.command: /usr/local/bin/traefik version
+  register: traefik_installed
+  changed_when: false
+  failed_when: false
+
+- name: Download and install Traefik {{ traefik_version }}
+  ansible.builtin.unarchive:
+    src: "https://github.com/traefik/traefik/releases/download/v{{ traefik_version }}/traefik_v{{ traefik_version }}_linux_{{ 'arm64' if ansible_facts.architecture == 'aarch64' else 'amd64' }}.tar.gz"
+    remote_src: true
+    dest: /usr/local/bin
+    include: [traefik]
+    mode: "0755"
+  when: traefik_version not in (traefik_installed.stdout | default(''))
+
+- name: Traefik config directory
+  ansible.builtin.file:
+    path: /etc/traefik
+    state: directory
+    mode: "0755"
+
+- name: Baked static configuration
+  ansible.builtin.template:
+    src: static.env.j2
+    dest: /etc/traefik/static.env
+    mode: "0644"
+
+- name: Systemd unit
+  ansible.builtin.copy:
+    src: traefik.service
+    dest: /etc/systemd/system/traefik.service
+    mode: "0644"
+
+- name: Traefik service state
+  ansible.builtin.systemd_service:
+    name: traefik
+    enabled: "{{ traefik_service_enabled }}"
+    daemon_reload: true

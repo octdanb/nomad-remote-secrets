@@ -16,7 +16,9 @@
 #     op_service_account_token = var.op_service_account_token  # sensitive
 #     op_cache_ttl             = "5m"
 #     enable_traefik           = false
-#     traefik_env              = ""                  # extra TRAEFIK_* lines
+#     traefik_env              = ""                  # extra TRAEFIK_* lines, e.g. with ACLs on:
+#         "TRAEFIK_PROVIDERS_NOMAD_ENDPOINT_TOKEN=$${nomad_traefik_token}"
+#         (mint with ansible/cluster-acl.yml; store/fetch via 1Password)
 #     nomad_extra_hcl          = ""                  # appended verbatim to runtime.hcl
 #   })
 #

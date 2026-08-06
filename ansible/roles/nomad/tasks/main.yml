@@ -1,0 +1,68 @@
+# Nomad from the HashiCorp apt repository, pinned and held: node upgrades
+# happen by replacing the image/host, not via unattended apt upgrades.
+- name: HashiCorp apt signing key
+  ansible.builtin.get_url:
+    url: https://apt.releases.hashicorp.com/gpg
+    dest: /etc/apt/keyrings/hashicorp.asc
+    mode: "0644"
+
+- name: HashiCorp apt repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by=/etc/apt/keyrings/hashicorp.asc]
+      https://apt.releases.hashicorp.com {{ ansible_facts.distribution_release }} main
+    filename: hashicorp
+
+- name: Install Nomad {{ nomad_version }}
+  ansible.builtin.apt:
+    name: "nomad={{ nomad_version }}-1"
+    state: present
+    update_cache: true
+
+- name: Hold the nomad package
+  ansible.builtin.dpkg_selections:
+    name: nomad
+    selection: hold
+
+- name: Nomad directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ nomad_data_dir }}"
+    - "{{ nomad_plugin_dir }}/secrets"
+
+- name: Remove the package example config
+  ansible.builtin.file:
+    path: /etc/nomad.d/nomad.hcl
+    state: absent
+
+- name: Base agent configuration
+  ansible.builtin.template:
+    src: base.hcl.j2
+    dest: /etc/nomad.d/base.hcl
+    mode: "0644"
+
+- name: Systemd drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/nomad.service.d
+    state: directory
+    mode: "0755"
+
+# Client agents must run as root: the docker task driver, cgroups, and
+# secret provider plugins (root-only cache/token files) require it.
+- name: Run the agent as root
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/nomad.service.d/override.conf
+    mode: "0644"
+    content: |
+      [Service]
+      User=root
+      Group=root
+
+- name: Nomad service state
+  ansible.builtin.systemd_service:
+    name: nomad
+    enabled: "{{ nomad_service_enabled }}"
+    daemon_reload: true

@@ -16,15 +16,30 @@ Traefik enablement are all injected at instance launch through cloud-init
 user data ([examples/user-data.sh.tftpl](examples/user-data.sh.tftpl)). One
 image serves every cluster, environment, and node pool.
 
+Provisioning is **Ansible** ([../ansible/](../ansible/)) driven by Packer's
+ansible provisioner — the same roles (`base`, `docker`, `nomad`,
+`onepassword_plugin`, `traefik`) provision bare-metal or long-lived EC2
+hosts:
+
+```sh
+ansible-playbook -i your-inventory ../ansible/image.yml \
+  -e nomad_version=1.11.0 \
+  -e onepassword_plugin_binary=/path/to/onepassword_linux_amd64 \
+  -e nomad_service_enabled=true -e traefik_service_enabled=true
+```
+
+(On bare metal you own `/etc/nomad.d/runtime.hcl` and `/etc/traefik/traefik.env`;
+on AMI instances first-boot user data writes them.)
+
 ## Prerequisites
 
-- Packer ≥ 1.10, AWS credentials for the account that owns your golden
-  images (typically a dedicated images/shared-services account in the org,
-  or the management account).
-- IAM permissions for Packer's EC2 build lifecycle plus
+- Packer ≥ 1.10 and **ansible-playbook** on the build machine.
+- AWS credentials for the account that owns your golden images (typically a
+  dedicated images/shared-services account in the org, or the management
+  account), with IAM permissions for Packer's EC2 build lifecycle plus
   `ec2:ModifyImageAttribute` (for org sharing).
 - The plugin binary: run `make release` at the repository root first — the
-  template uploads `bin/onepassword_linux_<arch>`.
+  build installs `bin/onepassword_linux_<arch>`.
 
 ## Build
 
@@ -120,6 +135,85 @@ provider** against the local agent, so any Nomad service tagged
 If you'd rather run Traefik as a Nomad system job on the ingress pool
 instead of a host service, ignore `enable_traefik` — the binary being
 present costs nothing.
+
+## Nomad ACLs
+
+The image enables ACL enforcement on every agent (`acl { enabled = true }`,
+baked by the `nomad` role). Everything else about ACLs — the bootstrap,
+policies, and tokens — is **cluster state stored by the Nomad servers**, so
+it is provisioned against a *live* cluster, not baked into the image:
+
+```sh
+cd ansible
+# first run on a fresh cluster: bootstraps ACLs, applies policies, mints tokens
+ansible-playbook cluster-acl.yml -e nomad_addr=http://nomad.internal:4646
+
+# later runs (idempotent — re-apply policies, create missing tokens)
+NOMAD_TOKEN=<management-token> ansible-playbook cluster-acl.yml \
+  -e nomad_addr=http://nomad.internal:4646
+```
+
+The playbook prints the bootstrap management token and each newly created
+token **exactly once** — store them in 1Password immediately (the output
+includes a ready `op item create` command). With ACLs enabled, anonymous
+requests are denied, so run the bootstrap soon after the first servers come
+up.
+
+Out of the box it provisions:
+
+| Object | Purpose |
+|---|---|
+| policy `traefik` | read-only namespace access — service discovery only |
+| policy `ui-readonly` | read-only jobs/allocations/nodes for humans |
+| token `traefik-nomad-provider` (client, policy `traefik`) | Traefik's Nomad provider |
+
+Add policies/tokens by extending `nomad_acl_policies` / `nomad_acl_tokens`
+in `ansible/roles/nomad_acl/defaults/main.yml`.
+
+### Traefik ↔ Nomad with ACLs
+
+Traefik's Nomad provider authenticates with the `traefik-nomad-provider`
+token. Store the minted token in 1Password, then inject it at instance
+launch via the user-data `traefik_env` input:
+
+```
+TRAEFIK_PROVIDERS_NOMAD_ENDPOINT_TOKEN=<token from 1Password>
+```
+
+Traefik's static configuration is environment-variable based
+(`/etc/traefik/static.env` baked, `/etc/traefik/traefik.env` injected)
+precisely so this token can be supplied at boot — Traefik does not merge
+static config from multiple sources, so a baked YAML file couldn't take a
+runtime token.
+
+### Nomad UI restricted access
+
+The UI is served by the same HTTP API on port 4646, so restricting it has
+two independent layers:
+
+1. **AuthN/AuthZ (ACLs)** — with ACLs enabled, an unauthenticated browser
+   sees nothing and the UI shows a token sign-in. Hand humans tokens bound
+   to `ui-readonly` (or richer policies per team). For team-scale access,
+   configure **SSO instead of shared tokens**: Nomad supports OIDC login in
+   the UI —
+
+   ```sh
+   nomad acl auth-method create -type=OIDC -name=sso -default-token-ttl=8h \
+     -token-locality=global -max-token-ttl=8h -config @oidc-config.json
+   nomad acl binding-rule create -auth-method=sso \
+     -bind-type=policy -bind-name=ui-readonly -selector='true'
+   ```
+
+   with your IdP (Google Workspace, Okta, Entra) in `oidc-config.json`; map
+   IdP groups to Nomad policies with more selective binding rules.
+
+2. **Network** — don't expose 4646 publicly. Reach the UI over VPN or an
+   internal ALB; security groups should admit 4646 only from the VPC and
+   admin sources. If you want the UI on a friendly internal name, route it
+   through Traefik as a normal service and keep ACLs as the auth layer.
+
+Client nodes themselves need no token for normal operation (client↔server
+RPC is internal); tokens are for the HTTP API — humans, CI, and Traefik.
 
 ## Injecting 1Password credentials (and other settings)
 

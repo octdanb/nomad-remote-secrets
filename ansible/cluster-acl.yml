@@ -1,0 +1,20 @@
+# One-time (and safely re-runnable) ACL provisioning for a LIVE cluster.
+# ACL policies and tokens are cluster state stored by the Nomad servers —
+# they cannot be baked into an image.
+#
+# First run (bootstraps ACLs and prints the management token ONCE — store it
+# in 1Password immediately):
+#
+#   ansible-playbook cluster-acl.yml -e nomad_addr=http://nomad.internal:4646
+#
+# Subsequent runs (idempotent; re-applies policies, creates missing tokens):
+#
+#   NOMAD_TOKEN=<management-token> ansible-playbook cluster-acl.yml \
+#     -e nomad_addr=http://nomad.internal:4646
+#
+- name: Provision Nomad ACLs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - nomad_acl

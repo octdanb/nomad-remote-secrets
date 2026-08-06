@@ -19,6 +19,10 @@ packer {
       source  = "github.com/hashicorp/amazon"
       version = ">= 1.3.0"
     }
+    ansible = {
+      source  = "github.com/hashicorp/ansible"
+      version = ">= 1.1.0"
+    }
   }
 }
 
@@ -136,27 +140,22 @@ source "amazon-ebs" "nomad_client" {
 build {
   sources = ["source.amazon-ebs.nomad_client"]
 
-  # Everything lands in /tmp first; the ssh user can't write system paths.
-  provisioner "file" {
-    source      = "../bin/onepassword_linux_${var.arch}"
-    destination = "/tmp/onepassword"
-  }
-
-  provisioner "file" {
-    source      = "files/"
-    destination = "/tmp/image-files"
-  }
-
-  provisioner "shell" {
-    execute_command = "sudo env NOMAD_VERSION=${var.nomad_version} TRAEFIK_VERSION=${var.traefik_version} ARCH=${var.arch} bash '{{ .Path }}'"
-    scripts = [
-      "scripts/install-base.sh",
-      "scripts/install-docker.sh",
-      "scripts/install-nomad.sh",
-      "scripts/install-plugin.sh",
-      "scripts/install-traefik.sh",
-      "scripts/cleanup.sh",
+  # All provisioning is Ansible — the same roles used on bare-metal hosts
+  # (see ansible/image.yml). Requires ansible-playbook on the build machine.
+  provisioner "ansible" {
+    playbook_file = "../ansible/image.yml"
+    use_proxy     = false
+    extra_arguments = [
+      "--extra-vars",
+      "nomad_version=${var.nomad_version} traefik_version=${var.traefik_version} onepassword_plugin_binary=${abspath("../bin/onepassword_linux_${var.arch}")}",
     ]
+  }
+
+  # Image-only finalisation (host keys, machine-id, logs) — not part of the
+  # reusable roles because it must never run on a live host.
+  provisioner "shell" {
+    execute_command = "sudo bash '{{ .Path }}'"
+    scripts         = ["scripts/cleanup.sh"]
   }
 
   post-processor "manifest" {

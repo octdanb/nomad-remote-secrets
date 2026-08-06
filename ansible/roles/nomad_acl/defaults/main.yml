@@ -1,0 +1,21 @@
+nomad_addr: "{{ lookup('env', 'NOMAD_ADDR') | default('http://127.0.0.1:4646', true) }}"
+
+# Management token for an already-bootstrapped cluster. Taken from
+# NOMAD_TOKEN by default; unnecessary on the very first run, which
+# bootstraps and uses the token it just created.
+nomad_mgmt_token: "{{ lookup('env', 'NOMAD_TOKEN') | default('', true) }}"
+
+# Policies applied on every run (idempotent).
+nomad_acl_policies:
+  - name: traefik
+    description: Read-only service discovery for Traefik's Nomad provider
+    file: policy-traefik.hcl
+  - name: ui-readonly
+    description: Read-only cluster visibility for the Nomad UI
+    file: policy-ui-readonly.hcl
+
+# Long-lived client tokens created if missing. Their secrets are printed
+# ONCE on creation — store them in 1Password immediately.
+nomad_acl_tokens:
+  - name: traefik-nomad-provider
+    policies: [traefik]
