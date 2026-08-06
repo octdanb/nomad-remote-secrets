@@ -69,6 +69,8 @@ func setupEnv(t *testing.T, host string) {
 
 	t.Setenv("OP_CONNECT_HOST", host)
 	t.Setenv("OP_CONNECT_TOKEN", "test-token")
+	t.Setenv("OP_SERVICE_ACCOUNT_TOKEN", "")
+	t.Setenv("OP_SERVICE_ACCOUNT_TOKEN_FILE", "")
 	t.Setenv("OP_CACHE_DIR", t.TempDir())
 	t.Setenv("OP_CONNECT_TOKEN_FILE", "")
 	t.Setenv("OP_CACHE_TTL", "")

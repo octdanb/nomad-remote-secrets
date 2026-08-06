@@ -2,6 +2,8 @@ package plugin
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -53,23 +55,25 @@ func LoadConfig(paths []string, getenv func(string) string) (Config, error) {
 		MaxStale:    24 * time.Hour,
 	}
 
-	if cfg.ConnectHost == "" {
-		return Config{}, fmt.Errorf("OP_CONNECT_HOST is not set: configure it in %s or in the Nomad agent environment", ConfigPaths[0])
-	}
-
-	cfg.Token = lookup("OP_CONNECT_TOKEN")
-	if file := lookup("OP_CONNECT_TOKEN_FILE"); cfg.Token == "" && file != "" {
-		data, err := os.ReadFile(file)
-		if err != nil {
-			return Config{}, fmt.Errorf("reading OP_CONNECT_TOKEN_FILE: %w", err)
-		}
-		cfg.Token = strings.TrimSpace(string(data))
-	}
-	if cfg.Token == "" {
-		return Config{}, fmt.Errorf("no Connect token: set OP_CONNECT_TOKEN or OP_CONNECT_TOKEN_FILE in %s or in the Nomad agent environment", ConfigPaths[0])
-	}
-
 	var err error
+	if cfg.ServiceAccountToken, err = tokenSetting(lookup, "OP_SERVICE_ACCOUNT_TOKEN"); err != nil {
+		return Config{}, err
+	}
+	if cfg.Token, err = tokenSetting(lookup, "OP_CONNECT_TOKEN"); err != nil {
+		return Config{}, err
+	}
+
+	// Backend selection: a service account token alone is a complete
+	// configuration; otherwise Connect needs both a host and a token.
+	if cfg.ServiceAccountToken == "" {
+		if cfg.ConnectHost == "" {
+			return Config{}, fmt.Errorf("no 1Password backend configured: set OP_SERVICE_ACCOUNT_TOKEN (service account) or OP_CONNECT_HOST and OP_CONNECT_TOKEN (Connect server) in %s or in the Nomad agent environment", ConfigPaths[0])
+		}
+		if cfg.Token == "" {
+			return Config{}, fmt.Errorf("no Connect token: set OP_CONNECT_TOKEN or OP_CONNECT_TOKEN_FILE in %s or in the Nomad agent environment", ConfigPaths[0])
+		}
+	}
+
 	if cfg.Timeout, err = durationSetting(lookup, "OP_REQUEST_TIMEOUT", cfg.Timeout); err != nil {
 		return Config{}, err
 	}
@@ -88,6 +92,34 @@ func LoadConfig(paths []string, getenv func(string) string) (Config, error) {
 		cfg.CacheDir = ""
 	}
 	return cfg, nil
+}
+
+// cacheScope returns the backend-identifying prefix for cache keys, so
+// entries are never shared across servers, accounts, or tokens with
+// different vault access.
+func (c Config) cacheScope() string {
+	host, token := c.ConnectHost, c.Token
+	if c.ServiceAccountToken != "" {
+		host, token = "service-account", c.ServiceAccountToken
+	}
+	sum := sha256.Sum256([]byte(token))
+	return host + "|" + hex.EncodeToString(sum[:8])
+}
+
+// tokenSetting reads a token from <key> or, failing that, from the file
+// named by <key>_FILE.
+func tokenSetting(lookup func(string) string, key string) (string, error) {
+	if v := lookup(key); v != "" {
+		return v, nil
+	}
+	if file := lookup(key + "_FILE"); file != "" {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return "", fmt.Errorf("reading %s_FILE: %w", key, err)
+		}
+		return strings.TrimSpace(string(data)), nil
+	}
+	return "", nil
 }
 
 // durationSetting parses a duration setting that accepts Go duration syntax

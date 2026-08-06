@@ -1,10 +1,18 @@
 # nomad-secret-plugin: 1Password for Nomad
 
 A [Nomad secret provider plugin](https://developer.hashicorp.com/nomad/plugins/author/secret-provider)
-that resolves 1Password secret references — `op://vault/item/field` — through a
-[1Password Connect](https://developer.1password.com/docs/connect/) server, so
-job specs can pull secrets straight from 1Password without running HashiCorp
-Vault.
+that resolves 1Password secret references — `op://vault/item/field` — so job
+specs can pull secrets straight from 1Password without running HashiCorp
+Vault. Two backends are supported:
+
+- **[Service accounts](https://developer.1password.com/docs/service-accounts/)**
+  (recommended start): a single vault-scoped `ops_...` token per client node,
+  talking directly to 1password.com. No servers to run.
+- **[1Password Connect](https://developer.1password.com/docs/connect/)**: a
+  self-hosted sync server, for high fetch volumes or clients without internet
+  egress.
+
+Job specs are identical on both; switching backends is a host config change.
 
 ```hcl
 task "app" {
@@ -81,16 +89,27 @@ env {                     ├─ written to on-disk cache
    }
    ```
 
-4. Configure the Connect connection on each node
-   ([examples/onepassword.env](examples/onepassword.env)):
+4. Configure the backend on each node
+   ([examples/onepassword.env](examples/onepassword.env)). With a service
+   account (create one in 1Password, scoped read-only to the vaults your
+   jobs need):
 
    ```sh
    install -d -m 0700 /etc/nomad-secret-onepassword
+   echo "ops_eyJ..." > /etc/nomad-secret-onepassword/token
+   cat > /etc/nomad-secret-onepassword/config.env <<'EOF'
+   OP_SERVICE_ACCOUNT_TOKEN_FILE=/etc/nomad-secret-onepassword/token
+   EOF
+   chmod 0600 /etc/nomad-secret-onepassword/config.env /etc/nomad-secret-onepassword/token
+   ```
+
+   Or with a self-hosted Connect server:
+
+   ```sh
    cat > /etc/nomad-secret-onepassword/config.env <<'EOF'
    OP_CONNECT_HOST=http://127.0.0.1:8080
    OP_CONNECT_TOKEN_FILE=/etc/nomad-secret-onepassword/token
    EOF
-   chmod 0600 /etc/nomad-secret-onepassword/config.env
    ```
 
 5. Restart (or SIGHUP) the Nomad client and confirm registration:
@@ -175,15 +194,37 @@ Settings come from (highest precedence first):
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `OP_CONNECT_HOST` | — (required) | Base URL of the Connect server |
+| `OP_SERVICE_ACCOUNT_TOKEN` | — | Service account token (`ops_...`) — enables the direct backend |
+| `OP_SERVICE_ACCOUNT_TOKEN_FILE` | — | File containing the service account token (preferred) |
+| `OP_CONNECT_HOST` | — | Base URL of the Connect server (Connect backend) |
 | `OP_CONNECT_TOKEN` | — | Connect access token |
-| `OP_CONNECT_TOKEN_FILE` | — | File containing the token (preferred) |
+| `OP_CONNECT_TOKEN_FILE` | — | File containing the Connect token (preferred) |
 | `OP_CACHE_TTL` | `5m` | Serve cached values this long without re-fetching; `0` disables |
 | `OP_CACHE_MAX_STALE` | `24h` | On Connect outage, serve values up to this old; `0` disables |
 | `OP_CACHE_DIR` | `/var/cache/nomad-secret-onepassword` | Cache location |
 | `OP_REQUEST_TIMEOUT` | `30s` | Per-fetch Connect timeout (Nomad kills fetches at 60s) |
 
 Durations accept Go syntax (`5m`, `90s`) or bare seconds (`300`).
+
+Backend selection: if a service account token is configured, it is used and
+any Connect settings are ignored; otherwise Connect requires both
+`OP_CONNECT_HOST` and a token. Exactly one backend serves each fetch.
+
+### Choosing a backend
+
+**Service accounts** need zero infrastructure — but every client node needs
+outbound HTTPS to 1password.com, and requests count against 1Password's
+[service account rate limits](https://developer.1password.com/docs/service-accounts/rate-limits/)
+(hourly per-account read/write caps plus daily caps by plan, e.g. 10,000/day
+per service account on Business). The plugin's on-disk cache keeps
+deploy-time fetch volume far below these caps for typical clusters. You can
+create up to 100 service accounts per 1Password account, so one token per
+cluster or environment is a reasonable pattern.
+
+**Connect** self-hosts a cache of your vaults, so reads are local, fast, and
+uncounted — the right choice for very high fetch volumes or client nodes
+without internet egress. It costs you two containers to run plus a
+`1password-credentials.json` deployment credential to protect.
 
 > **Why the config file beats the environment.** Nomad passes a job's
 > `env {}` block into the plugin's process environment. If the environment
@@ -219,8 +260,11 @@ redeployed — Nomad resolves `secret` blocks at task start, not continuously.
 
 ## Security notes
 
-- The plugin runs as the Nomad agent user (typically root). The Connect
-  token and cache are readable only by that user.
+- The plugin runs as the Nomad agent user (typically root). Tokens and the
+  cache are readable only by that user.
+- Service account tokens can be created with an expiry (`op
+  service-account create --expires-in ...`); expiring tokens plus a rotation
+  step in your image pipeline beats long-lived credentials.
 - Secret values never appear in job specs, in Nomad server state, or in
   plugin logs — only in the task's resolved environment.
 - Prefer `OP_CONNECT_TOKEN_FILE` over inline `OP_CONNECT_TOKEN`, and scope

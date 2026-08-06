@@ -16,6 +16,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/octdanb/nomad-secret-plugin/internal/opitem"
 )
 
 // idPattern matches 1Password object IDs (26 lowercase base32 characters).
@@ -77,11 +79,11 @@ type apiError struct {
 }
 
 // GetVault resolves a vault by ID or, failing that, by exact name.
-func (c *Client) GetVault(ctx context.Context, nameOrID string) (*Vault, error) {
+func (c *Client) GetVault(ctx context.Context, nameOrID string) (*opitem.Vault, error) {
 	if idPattern.MatchString(nameOrID) {
 		var v Vault
 		if err := c.get(ctx, "/v1/vaults/"+nameOrID, nil, &v); err == nil {
-			return &v, nil
+			return &opitem.Vault{ID: v.ID, Name: v.Name}, nil
 		}
 		// An ID-shaped string can legitimately be a vault name; fall
 		// through to a name lookup before giving up.
@@ -96,7 +98,7 @@ func (c *Client) GetVault(ctx context.Context, nameOrID string) (*Vault, error) 
 	case 0:
 		return nil, fmt.Errorf("no vault named %q is visible to this Connect token", nameOrID)
 	case 1:
-		return &vaults[0], nil
+		return &opitem.Vault{ID: vaults[0].ID, Name: vaults[0].Name}, nil
 	default:
 		return nil, fmt.Errorf("%d vaults named %q; reference the vault by ID instead", len(vaults), nameOrID)
 	}
@@ -104,11 +106,11 @@ func (c *Client) GetVault(ctx context.Context, nameOrID string) (*Vault, error) 
 
 // GetItem resolves an item within a vault by ID or exact title and returns it
 // with its full field values.
-func (c *Client) GetItem(ctx context.Context, vaultID, nameOrID string) (*Item, error) {
+func (c *Client) GetItem(ctx context.Context, vaultID, nameOrID string) (*opitem.Item, error) {
 	if idPattern.MatchString(nameOrID) {
 		var it Item
 		if err := c.get(ctx, "/v1/vaults/"+vaultID+"/items/"+nameOrID, nil, &it); err == nil {
-			return &it, nil
+			return toOpItem(&it), nil
 		}
 	}
 
@@ -127,10 +129,37 @@ func (c *Client) GetItem(ctx context.Context, vaultID, nameOrID string) (*Item, 
 		if err := c.get(ctx, "/v1/vaults/"+vaultID+"/items/"+summaries[0].ID, nil, &it); err != nil {
 			return nil, err
 		}
-		return &it, nil
+		return toOpItem(&it), nil
 	default:
 		return nil, fmt.Errorf("%d items titled %q in vault; reference the item by ID instead", len(summaries), nameOrID)
 	}
+}
+
+// toOpItem converts the Connect wire format into the backend-neutral model.
+func toOpItem(it *Item) *opitem.Item {
+	out := &opitem.Item{
+		ID:       it.ID,
+		Title:    it.Title,
+		Category: it.Category,
+	}
+	for _, s := range it.Sections {
+		out.Sections = append(out.Sections, opitem.Section{ID: s.ID, Label: s.Label})
+	}
+	for _, f := range it.Fields {
+		nf := opitem.Field{
+			ID:      f.ID,
+			Label:   f.Label,
+			Type:    f.Type,
+			Purpose: f.Purpose,
+			Value:   f.Value,
+			TOTP:    f.TOTP,
+		}
+		if f.Section != nil {
+			nf.SectionID = f.Section.ID
+		}
+		out.Fields = append(out.Fields, nf)
+	}
+	return out
 }
 
 func (c *Client) get(ctx context.Context, path string, query url.Values, out any) error {

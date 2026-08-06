@@ -85,6 +85,46 @@ func TestTokenFile(t *testing.T) {
 	}
 }
 
+func TestServiceAccountTokenAloneIsComplete(t *testing.T) {
+	cfg, err := LoadConfig(nil, envMap(map[string]string{
+		"OP_SERVICE_ACCOUNT_TOKEN": "ops_abc123",
+	}))
+	if err != nil {
+		t.Fatalf("service account token alone should be a valid config: %v", err)
+	}
+	if cfg.ServiceAccountToken != "ops_abc123" {
+		t.Errorf("token = %q", cfg.ServiceAccountToken)
+	}
+}
+
+func TestServiceAccountTokenFile(t *testing.T) {
+	tokenPath := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenPath, []byte("ops_fromfile\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(nil, envMap(map[string]string{
+		"OP_SERVICE_ACCOUNT_TOKEN_FILE": tokenPath,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ServiceAccountToken != "ops_fromfile" {
+		t.Errorf("token = %q, want trimmed file contents", cfg.ServiceAccountToken)
+	}
+}
+
+func TestCacheScopeSeparatesBackends(t *testing.T) {
+	connect := Config{ConnectHost: "http://c:8080", Token: "tok"}
+	sa := Config{ConnectHost: "http://c:8080", Token: "tok", ServiceAccountToken: "ops_x"}
+	if connect.cacheScope() == sa.cacheScope() {
+		t.Error("connect and service-account configs must not share cache entries")
+	}
+	sa2 := Config{ServiceAccountToken: "ops_y"}
+	if sa.cacheScope() == sa2.cacheScope() {
+		t.Error("different service account tokens must not share cache entries")
+	}
+}
+
 func TestMissingHostAndToken(t *testing.T) {
 	if _, err := LoadConfig(nil, envMap(nil)); err == nil || !strings.Contains(err.Error(), "OP_CONNECT_HOST") {
 		t.Errorf("err = %v, want missing-host error", err)

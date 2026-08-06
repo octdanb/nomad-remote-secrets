@@ -8,8 +8,6 @@ package plugin
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,12 +18,21 @@ import (
 
 	"github.com/octdanb/nomad-secret-plugin/internal/cache"
 	"github.com/octdanb/nomad-secret-plugin/internal/connect"
+	"github.com/octdanb/nomad-secret-plugin/internal/opitem"
 	"github.com/octdanb/nomad-secret-plugin/internal/opref"
+	"github.com/octdanb/nomad-secret-plugin/internal/serviceaccount"
 )
+
+// Source is the backend that resolves vaults and items. Two implementations
+// exist: the Connect REST client and the service-account SDK backend.
+type Source interface {
+	GetVault(ctx context.Context, nameOrID string) (*opitem.Vault, error)
+	GetItem(ctx context.Context, vaultID, nameOrID string) (*opitem.Item, error)
+}
 
 // Version is reported to Nomad in the fingerprint response and used to
 // register the plugin on each client node.
-const Version = "0.2.0"
+const Version = "0.3.0"
 
 // ConfigPaths are the host configuration files consulted in order; the first
 // one that exists wins. Values from the host file take precedence over
@@ -37,14 +44,17 @@ var ConfigPaths = []string{
 	"/etc/nomad.d/onepassword.env",
 }
 
-// Config holds everything a fetch needs.
+// Config holds everything a fetch needs. Exactly one backend is used per
+// fetch: a service account token (direct to 1password.com) or a Connect
+// server; the service account wins when both are configured.
 type Config struct {
-	ConnectHost string        // OP_CONNECT_HOST
-	Token       string        // OP_CONNECT_TOKEN / OP_CONNECT_TOKEN_FILE
-	Timeout     time.Duration // OP_REQUEST_TIMEOUT (default 30s)
-	CacheDir    string        // OP_CACHE_DIR
-	CacheTTL    time.Duration // OP_CACHE_TTL (default 5m, 0 disables)
-	MaxStale    time.Duration // OP_CACHE_MAX_STALE (default 24h, 0 disables fallback)
+	ServiceAccountToken string        // OP_SERVICE_ACCOUNT_TOKEN / OP_SERVICE_ACCOUNT_TOKEN_FILE
+	ConnectHost         string        // OP_CONNECT_HOST
+	Token               string        // OP_CONNECT_TOKEN / OP_CONNECT_TOKEN_FILE
+	Timeout             time.Duration // OP_REQUEST_TIMEOUT (default 30s)
+	CacheDir            string        // OP_CACHE_DIR
+	CacheTTL            time.Duration // OP_CACHE_TTL (default 5m, 0 disables)
+	MaxStale            time.Duration // OP_CACHE_MAX_STALE (default 24h, 0 disables fallback)
 }
 
 // fetchResponse is the JSON shape Nomad expects on stdout for fetch.
@@ -100,11 +110,11 @@ func fetch(stderr io.Writer, path string) (map[string]string, error) {
 	// Nomad's 60-second kill window regardless of entry count.
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
-	client := connect.New(cfg.ConnectHost, cfg.Token, cfg.Timeout)
+	src := newSource(cfg)
 
 	merged := map[string]string{}
 	for _, entry := range entries {
-		values, err := fetchOne(ctx, stderr, cfg, store, client, entry.Ref)
+		values, err := fetchOne(ctx, stderr, cfg, store, src, entry.Ref)
 		if err != nil {
 			return nil, err
 		}
@@ -127,15 +137,57 @@ func fetch(stderr io.Writer, path string) (map[string]string, error) {
 	return merged, nil
 }
 
+// newSource picks the backend from the configuration. A service account
+// token wins over Connect settings — configuring one is an explicit choice,
+// while Connect variables can linger in an agent's environment.
+//
+// The service-account source is wrapped so SDK authentication happens on
+// first use, inside fetchOne — that way an unreachable 1password.com still
+// falls back to the stale cache instead of failing before the cache is
+// consulted.
+func newSource(cfg Config) Source {
+	if cfg.ServiceAccountToken != "" {
+		return &lazyServiceAccount{token: cfg.ServiceAccountToken}
+	}
+	return connect.New(cfg.ConnectHost, cfg.Token, cfg.Timeout)
+}
+
+type lazyServiceAccount struct {
+	token string
+	src   *serviceaccount.Source
+}
+
+func (l *lazyServiceAccount) ensure(ctx context.Context) error {
+	if l.src != nil {
+		return nil
+	}
+	src, err := serviceaccount.New(ctx, l.token, Version)
+	if err != nil {
+		return err
+	}
+	l.src = src
+	return nil
+}
+
+func (l *lazyServiceAccount) GetVault(ctx context.Context, nameOrID string) (*opitem.Vault, error) {
+	if err := l.ensure(ctx); err != nil {
+		return nil, err
+	}
+	return l.src.GetVault(ctx, nameOrID)
+}
+
+func (l *lazyServiceAccount) GetItem(ctx context.Context, vaultID, nameOrID string) (*opitem.Item, error) {
+	if err := l.ensure(ctx); err != nil {
+		return nil, err
+	}
+	return l.src.GetItem(ctx, vaultID, nameOrID)
+}
+
 // fetchOne resolves a single reference through the cache: fresh cache hit,
-// then a live Connect fetch, then — if Connect is unreachable — a stale
-// cache entry within the configured age bound.
-func fetchOne(ctx context.Context, stderr io.Writer, cfg Config, store *cache.Cache, client *connect.Client, ref opref.Ref) (map[string]string, error) {
-	// The cache key includes the Connect host and a digest of the token so
-	// entries are never shared across servers or across tokens with
-	// different vault access.
-	tokenSum := sha256.Sum256([]byte(cfg.Token))
-	cacheKey := cfg.ConnectHost + "|" + hex.EncodeToString(tokenSum[:8]) + "|" + ref.String()
+// then a live fetch, then — if the backend is unreachable — a stale cache
+// entry within the configured age bound.
+func fetchOne(ctx context.Context, stderr io.Writer, cfg Config, store *cache.Cache, src Source, ref opref.Ref) (map[string]string, error) {
+	cacheKey := cfg.cacheScope() + "|" + ref.String()
 
 	// OTP codes rotate every 30 seconds; serving them from cache would
 	// hand out expired codes.
@@ -147,11 +199,11 @@ func fetchOne(ctx context.Context, stderr io.Writer, cfg Config, store *cache.Ca
 		}
 	}
 
-	values, err := resolve(ctx, client, ref)
+	values, err := resolve(ctx, src, ref)
 	if err != nil {
 		if store != nil && cacheable && cfg.MaxStale > 0 {
 			if stale, age, ok := store.Stale(cacheKey, cfg.MaxStale); ok {
-				fmt.Fprintf(stderr, "onepassword: 1Password Connect unavailable (%v); serving cached value %s old for %s\n",
+				fmt.Fprintf(stderr, "onepassword: 1Password unavailable (%v); serving cached value %s old for %s\n",
 					err, age.Round(time.Second), ref)
 				return stale, nil
 			}
@@ -168,12 +220,12 @@ func fetchOne(ctx context.Context, stderr io.Writer, cfg Config, store *cache.Ca
 }
 
 // resolve turns a parsed reference into the key/value map handed to Nomad.
-func resolve(ctx context.Context, client *connect.Client, ref opref.Ref) (map[string]string, error) {
-	vault, err := client.GetVault(ctx, ref.Vault)
+func resolve(ctx context.Context, src Source, ref opref.Ref) (map[string]string, error) {
+	vault, err := src.GetVault(ctx, ref.Vault)
 	if err != nil {
 		return nil, fmt.Errorf("resolving %s: %w", ref, err)
 	}
-	item, err := client.GetItem(ctx, vault.ID, ref.Item)
+	item, err := src.GetItem(ctx, vault.ID, ref.Item)
 	if err != nil {
 		return nil, fmt.Errorf("resolving %s: %w", ref, err)
 	}
@@ -207,7 +259,7 @@ func resolve(ctx context.Context, client *connect.Client, ref opref.Ref) (map[st
 // itemValues flattens every non-empty field of an item into interpolation
 // keys. Fields inside a section are prefixed with the section label so that
 // identically named fields in different sections don't collide.
-func itemValues(item *connect.Item) map[string]string {
+func itemValues(item *opitem.Item) map[string]string {
 	sections := sectionLabels(item)
 	values := map[string]string{}
 
@@ -216,8 +268,8 @@ func itemValues(item *connect.Item) map[string]string {
 			continue
 		}
 		key := fieldKey(f)
-		if f.Section != nil {
-			if label := sections[f.Section.ID]; label != "" {
+		if f.SectionID != "" {
+			if label := sections[f.SectionID]; label != "" {
 				key = label + "_" + key
 			}
 		}
@@ -234,7 +286,7 @@ func itemValues(item *connect.Item) map[string]string {
 	// Guarantee the conventional keys for login items even when a label
 	// was customized.
 	for _, f := range item.Fields {
-		if f.Value == "" || f.Section != nil {
+		if f.Value == "" || f.SectionID != "" {
 			continue
 		}
 		switch f.Purpose {
@@ -251,19 +303,19 @@ func itemValues(item *connect.Item) map[string]string {
 
 // findField locates the field a reference addresses, honouring the optional
 // section qualifier. Labels are matched case-insensitively; IDs exactly.
-func findField(item *connect.Item, ref opref.Ref) (*connect.Field, error) {
+func findField(item *opitem.Item, ref opref.Ref) (*opitem.Field, error) {
 	sections := sectionLabels(item)
 
-	var matches []*connect.Field
+	var matches []*opitem.Field
 	for i := range item.Fields {
 		f := &item.Fields[i]
 
 		if ref.Section != "" {
-			if f.Section == nil {
+			if f.SectionID == "" {
 				continue
 			}
-			label := sections[f.Section.ID]
-			if f.Section.ID != ref.Section && !strings.EqualFold(label, ref.Section) {
+			label := sections[f.SectionID]
+			if f.SectionID != ref.Section && !strings.EqualFold(label, ref.Section) {
 				continue
 			}
 		}
@@ -284,7 +336,7 @@ func findField(item *connect.Item, ref opref.Ref) (*connect.Field, error) {
 		// section qualifier — mirrors how 1Password resolves ambiguity.
 		if ref.Section == "" {
 			for _, f := range matches {
-				if f.Section == nil {
+				if f.SectionID == "" {
 					return f, nil
 				}
 			}
@@ -293,7 +345,7 @@ func findField(item *connect.Item, ref opref.Ref) (*connect.Field, error) {
 	}
 }
 
-func sectionLabels(item *connect.Item) map[string]string {
+func sectionLabels(item *opitem.Item) map[string]string {
 	labels := make(map[string]string, len(item.Sections))
 	for _, s := range item.Sections {
 		labels[s.ID] = s.Label
@@ -301,7 +353,7 @@ func sectionLabels(item *connect.Item) map[string]string {
 	return labels
 }
 
-func fieldKey(f connect.Field) string {
+func fieldKey(f opitem.Field) string {
 	if f.Label != "" {
 		return f.Label
 	}
