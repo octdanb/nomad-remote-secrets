@@ -10,6 +10,7 @@ Type=notify
 # (Nomad ACL token, ACME email, dashboard settings, ...).
 EnvironmentFile=/etc/traefik/static.env
 EnvironmentFile=-/etc/traefik/traefik.env
+EnvironmentFile=-/etc/traefik/nomad-token.env
 ExecStart=/usr/local/bin/traefik
 Restart=on-failure
 RestartSec=5

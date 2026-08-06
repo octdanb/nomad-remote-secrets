@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# First boot of a Nomad client node (pool: ${node_pool}). Rendered by
+# Terraform — see clients.tf. Secrets are pulled from SSM by the instance
+# itself so they never appear in user data or Terraform state.
+set -euo pipefail
+exec > >(tee /var/log/user-data.log | logger -t user-data) 2>&1
+
+# ------------------------------------------------------------------ 1Password
+umask 077
+install -d -m 0700 /etc/nomad-secret-onepassword
+aws ssm get-parameter --with-decryption --region "${aws_region}" \
+  --name "${op_token_ssm_parameter}" \
+  --query Parameter.Value --output text > /etc/nomad-secret-onepassword/token
+cat > /etc/nomad-secret-onepassword/config.env <<'EOT'
+OP_SERVICE_ACCOUNT_TOKEN_FILE=/etc/nomad-secret-onepassword/token
+EOT
+umask 022
+
+/opt/nomad/plugins/secrets/onepassword check \
+  || echo "WARNING: onepassword check failed — job secrets will not resolve until fixed"
+
+# ---------------------------------------------------------------------- Nomad
+cat > /etc/nomad.d/runtime.hcl <<'EOT'
+datacenter = "${datacenter}"
+region     = "${nomad_region}"
+
+client {
+  node_pool  = "${node_pool}"
+  node_class = "${node_class}"
+
+  server_join {
+    retry_join = ["provider=aws tag_key=${server_join_tag_key} tag_value=${server_join_tag_value}"]
+  }
+}
+EOT
+
+systemctl enable --now nomad
+
+# -------------------------------------------------------------------- Traefik
+%{ if enable_traefik ~}
+# Runtime static config (merges over the baked static.env).
+cat > /etc/traefik/traefik.env <<'EOT'
+TRAEFIK_PROVIDERS_FILE_DIRECTORY=/etc/traefik/dynamic
+TRAEFIK_PROVIDERS_FILE_WATCH=true
+TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_EMAIL=${traefik_acme_email}
+TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_STORAGE=/etc/traefik/acme.json
+TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_HTTPCHALLENGE=true
+TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_HTTPCHALLENGE_ENTRYPOINT=web
+%{ if traefik_dashboard_users != "" ~}
+TRAEFIK_API_DASHBOARD=true
+%{ endif ~}
+EOT
+chmod 0600 /etc/traefik/traefik.env
+
+# Routes that need no Nomad ACL token: the Nomad UI is plain reverse
+# proxying (the browser authenticates itself to Nomad), and the dashboard
+# is Traefik-internal. Only *service discovery* needs a token, below.
+install -d /etc/traefik/dynamic
+cat > /etc/traefik/dynamic/platform.yml <<'EOT'
+http:
+  routers:
+    nomad-ui:
+      rule: Host(`nomad.${fqdn_base}`)
+      entryPoints: [websecure]
+      service: nomad-ui
+      tls:
+        certResolver: le
+%{ if traefik_dashboard_users != "" ~}
+    traefik-dashboard:
+      rule: Host(`traefik.${fqdn_base}`)
+      entryPoints: [websecure]
+      service: api@internal
+      middlewares: [dashboard-auth]
+      tls:
+        certResolver: le
+  middlewares:
+    dashboard-auth:
+      basicAuth:
+        users:
+          - "${traefik_dashboard_users}"
+%{ endif ~}
+  services:
+    nomad-ui:
+      loadBalancer:
+        servers:
+          - url: http://127.0.0.1:4646
+EOT
+
+# Nomad-provider token self-fetch: the ACL playbook stores the token in
+# 1Password AFTER the cluster is up; this timer polls for it via the
+# onepassword plugin binary and hot-enables service discovery when it
+# appears. Until then Traefik still serves the routes above.
+cat > /usr/local/bin/traefik-nomad-token <<'EOT'
+#!/usr/bin/env bash
+set -euo pipefail
+ENV_FILE=/etc/traefik/nomad-token.env
+if grep -qs ENDPOINT_TOKEN "$ENV_FILE"; then
+  systemctl disable --now traefik-nomad-token.timer 2>/dev/null || true
+  exit 0
+fi
+out=$(/opt/nomad/plugins/secrets/onepassword fetch "${traefik_token_ref}")
+tok=$(jq -r '.result.value // empty' <<<"$out")
+if [ -z "$tok" ]; then
+  echo "traefik token not in 1Password yet: $(jq -r '.error // "unknown"' <<<"$out")" >&2
+  exit 1
+fi
+umask 077
+echo "TRAEFIK_PROVIDERS_NOMAD_ENDPOINT_TOKEN=$tok" > "$ENV_FILE"
+systemctl restart traefik
+systemctl disable --now traefik-nomad-token.timer 2>/dev/null || true
+echo "traefik nomad-provider token installed"
+EOT
+chmod 0755 /usr/local/bin/traefik-nomad-token
+
+cat > /etc/systemd/system/traefik-nomad-token.service <<'EOT'
+[Unit]
+Description=Fetch Traefik's Nomad ACL token from 1Password
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/traefik-nomad-token
+EOT
+
+cat > /etc/systemd/system/traefik-nomad-token.timer <<'EOT'
+[Unit]
+Description=Poll 1Password for Traefik's Nomad ACL token
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+[Install]
+WantedBy=timers.target
+EOT
+
+systemctl daemon-reload
+systemctl enable --now traefik
+systemctl enable --now traefik-nomad-token.timer
+%{ endif ~}
+
+echo "user-data: node ready (pool=${node_pool}, dc=${datacenter}, traefik=${enable_traefik})"

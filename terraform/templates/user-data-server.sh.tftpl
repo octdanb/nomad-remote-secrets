@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# First boot of a Nomad server. Same golden AMI as clients; runtime config
+# flips the agent into server mode. Servers hold no 1Password credentials —
+# secret fetches happen on the clients running the workloads.
+set -euo pipefail
+exec > >(tee /var/log/user-data.log | logger -t user-data) 2>&1
+
+cat > /etc/nomad.d/runtime.hcl <<'EOT'
+datacenter = "${datacenter}"
+region     = "${nomad_region}"
+
+client {
+  enabled = false
+}
+
+server {
+  enabled          = true
+  bootstrap_expect = ${server_count}
+
+  server_join {
+    retry_join = ["provider=aws tag_key=${server_join_tag_key} tag_value=${server_join_tag_value}"]
+  }
+}
+EOT
+
+systemctl enable --now nomad
+echo "user-data: nomad server configured (dc=${datacenter}, expect=${server_count})"

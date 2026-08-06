@@ -1,0 +1,31 @@
+# Cluster definition — copy to terraform.tfvars (or <env>.tfvars) and edit.
+# Hostnames become nomad.<app_name>.<environment>.octave.nz etc.
+
+app_name    = "smspit"
+environment = "prod"
+region      = "ap-southeast-2"
+
+# Existing network to deploy into.
+vpc_id             = "vpc-0123456789abcdef0"
+private_subnet_ids = ["subnet-aaa", "subnet-bbb", "subnet-ccc"]
+public_subnet_ids  = ["subnet-ddd", "subnet-eee", "subnet-fff"]
+
+# Golden AMI (built by packer/, shared from the images account).
+ami_owner_account_id = "111111111111"
+ami_name_filter      = "nomad-client-1.0.*-amd64-*" # pin minor, float patch
+
+# Nomad topology.
+server_count = 3
+node_pools = {
+  general = { instance_type = "t3.large", min_size = 1, max_size = 4, desired = 2 }
+  ingress = { instance_type = "t3.small", min_size = 1, max_size = 2, desired = 1, ingress = true }
+}
+
+# Traefik.
+traefik_acme_email = "platform@octave.nz"
+# htpasswd -nB admin   (empty string disables the dashboard route)
+traefik_dashboard_users = "admin:$2y$05$..."
+
+# Container registries and static assets.
+ecr_repositories    = ["api", "worker"]
+static_site_enabled = true

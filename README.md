@@ -64,9 +64,12 @@ env {                     ├─ written to on-disk cache
 ## Installation
 
 > Building AWS infrastructure? [packer/](packer/) ships a versioned,
-> org-shareable Ubuntu AMI (ap-southeast-2) with Nomad, Docker, this plugin,
-> and optional Traefik preinstalled — credentials and node-pool settings are
-> injected at instance launch. The steps below cover manual installation.
+> org-shareable Ubuntu AMI (ap-southeast-2, provisioned by the reusable
+> [ansible/](ansible/) roles), and [terraform/](terraform/) turns one tfvars
+> file into a full cluster: server/pool ASGs, ingress NLB with
+> `nomad.<app>.<env>` / `traefik.<app>.<env>` DNS, ECR, optional
+> S3+CloudFront, and 1Password/SSM secret wiring. The steps below cover
+> manual installation.
 
 1. Build the binary (Go 1.24+):
 

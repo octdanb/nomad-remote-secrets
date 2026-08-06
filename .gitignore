@@ -3,3 +3,8 @@
 packer/manifest.json
 packer/packer_cache/
 crash.log
+.terraform/
+.terraform.lock.hcl
+*.tfstate*
+terraform.tfvars
+*.auto.tfvars
