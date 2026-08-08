@@ -1,10 +1,10 @@
 # This is a single scheme-routed binary serving multiple backends
 # (1Password, AWS Parameter Store, AWS Secrets Manager). The Nomad provider
-# name is `secrets`: jobs reference it with `provider = "secrets"`, and the
-# reference scheme (op://, aws-ssm:, aws-sm:) selects the backend at fetch
-# time. Nomad discovers an executable named `secrets` under
-# <common_plugin_dir>/secrets/.
-BINARY  := secrets
+# name is `remote-secrets`: jobs reference it with `provider = "remote-secrets"`,
+# and the reference scheme (op://, aws-ssm:, aws-sm:) selects the backend at
+# fetch time. Nomad discovers an executable named `remote-secrets` under
+# <common_plugin_dir>/secrets/ (the "secrets" dir is Nomad's plugin type dir).
+BINARY  := remote-secrets
 GOFLAGS := -trimpath -ldflags="-s -w"
 
 .PHONY: build test lint install release clean

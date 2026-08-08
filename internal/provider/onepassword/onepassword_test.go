@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/octdanb/nomad-secret-plugin/internal/provider/onepassword/opitem"
-	"github.com/octdanb/nomad-secret-plugin/internal/provider/onepassword/opref"
+	"github.com/octdanb/nomad-remote-secrets/internal/provider/onepassword/opitem"
+	"github.com/octdanb/nomad-remote-secrets/internal/provider/onepassword/opref"
 )
 
 // fakeSource is an in-memory Source for resolve tests.

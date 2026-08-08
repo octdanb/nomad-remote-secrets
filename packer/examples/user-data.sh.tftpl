@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # First-boot configuration for the nomad-client AMI, rendered by Terraform's
 # templatefile() (see usage below). The AMI ships Nomad, Docker, the
-# multi-provider secrets plugin, and Traefik installed but UNCONFIGURED — this script
+# multi-provider remote-secrets plugin, and Traefik installed but UNCONFIGURED — this script
 # injects everything environment-specific and then starts the services.
 #
 # Terraform usage:
@@ -30,19 +30,19 @@ set -euo pipefail
 exec > >(tee /var/log/user-data.log | logger -t user-data) 2>&1
 
 # ------------------------------------------------------------------ 1Password
-install -d -m 0700 /etc/nomad-secret
+install -d -m 0700 /etc/remote-secrets
 umask 077
-cat > /etc/nomad-secret/token <<'EOT'
+cat > /etc/remote-secrets/token <<'EOT'
 ${op_service_account_token}
 EOT
-cat > /etc/nomad-secret/config.env <<'EOT'
-OP_SERVICE_ACCOUNT_TOKEN_FILE=/etc/nomad-secret/token
+cat > /etc/remote-secrets/config.env <<'EOT'
+OP_SERVICE_ACCOUNT_TOKEN_FILE=/etc/remote-secrets/token
 OP_CACHE_TTL=${op_cache_ttl}
 EOT
 umask 022
 
 # Fail fast (visibly, in this log) if the credentials or scope are wrong.
-/opt/nomad/plugins/secrets/secrets check || echo "WARNING: secrets check failed — secrets will not resolve until fixed"
+/opt/nomad/plugins/secrets/remote-secrets check || echo "WARNING: secrets check failed — secrets will not resolve until fixed"
 
 # ---------------------------------------------------------------------- Nomad
 cat > /etc/nomad.d/runtime.hcl <<'EOT'

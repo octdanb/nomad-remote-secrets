@@ -13,11 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/octdanb/nomad-secret-plugin/internal/provider"
-	"github.com/octdanb/nomad-secret-plugin/internal/provider/onepassword/connect"
-	"github.com/octdanb/nomad-secret-plugin/internal/provider/onepassword/opitem"
-	"github.com/octdanb/nomad-secret-plugin/internal/provider/onepassword/opref"
-	"github.com/octdanb/nomad-secret-plugin/internal/provider/onepassword/serviceaccount"
+	"github.com/octdanb/nomad-remote-secrets/internal/provider"
+	"github.com/octdanb/nomad-remote-secrets/internal/provider/onepassword/connect"
+	"github.com/octdanb/nomad-remote-secrets/internal/provider/onepassword/opitem"
+	"github.com/octdanb/nomad-remote-secrets/internal/provider/onepassword/opref"
+	"github.com/octdanb/nomad-remote-secrets/internal/provider/onepassword/serviceaccount"
 )
 
 // Scheme is the reference scheme this provider handles.

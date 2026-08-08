@@ -21,7 +21,7 @@ job "e2e-secrets" {
       driver = "docker"
 
       secret "db" {
-        provider = "secrets"
+        provider = "remote-secrets"
         path     = var.secret_path
       }
 

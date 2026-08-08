@@ -8,21 +8,21 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/octdanb/nomad-secret-plugin/internal/cache"
-	"github.com/octdanb/nomad-secret-plugin/internal/provider"
-	"github.com/octdanb/nomad-secret-plugin/internal/provider/awssm"
-	"github.com/octdanb/nomad-secret-plugin/internal/provider/awsssm"
-	"github.com/octdanb/nomad-secret-plugin/internal/provider/onepassword"
+	"github.com/octdanb/nomad-remote-secrets/internal/cache"
+	"github.com/octdanb/nomad-remote-secrets/internal/provider"
+	"github.com/octdanb/nomad-remote-secrets/internal/provider/awssm"
+	"github.com/octdanb/nomad-remote-secrets/internal/provider/awsssm"
+	"github.com/octdanb/nomad-remote-secrets/internal/provider/onepassword"
 )
 
-// Check is the operator diagnostic behind `secrets check [reference]`.
+// Check is the operator diagnostic behind `remote-secrets check [reference]`.
 // It reports how the plugin is configured on this node, verifies
 // connectivity and credential scope, and optionally dry-runs a secret
 // reference (or a multi-entry path). Secret values are never printed — for
 // references it prints only the interpolation keys that would be exposed.
 // It returns the process exit code.
 func Check(w io.Writer, path string) int {
-	fmt.Fprintf(w, "secrets provider v%s — diagnostic\n\n", Version)
+	fmt.Fprintf(w, "remote-secrets provider v%s — diagnostic\n\n", Version)
 
 	cfg, err := LoadConfig(ConfigPaths, os.Getenv)
 	if err != nil {

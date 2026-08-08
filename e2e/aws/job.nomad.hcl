@@ -17,22 +17,22 @@ job "e2e-aws-secrets" {
       driver = "docker"
 
       secret "db" {
-        provider = "secrets"
+        provider = "remote-secrets"
         path     = "aws-ssm:/prod/db/password"
       }
 
       secret "creds" {
-        provider = "secrets"
+        provider = "remote-secrets"
         path     = "aws-ssm:/prod/db/creds"
       }
 
       secret "sm" {
-        provider = "secrets"
+        provider = "remote-secrets"
         path     = "aws-sm:prod/sm/plain"
       }
 
       secret "smcreds" {
-        provider = "secrets"
+        provider = "remote-secrets"
         path     = "aws-sm:prod/sm/creds"
       }
 

@@ -8,7 +8,7 @@
 // and packer/README.md).
 //
 // Build (from the repository root):
-//   make release                      # builds bin/secrets_linux_<arch>
+//   make release                      # builds bin/remote-secrets_linux_<arch>
 //   cd packer
 //   packer init .
 //   packer build -var image_version=1.0.0 -var org_arn=arn:aws:organizations::123456789012:organization/o-abc123 .
@@ -44,7 +44,7 @@ variable "region" {
 variable "arch" {
   type        = string
   default     = "amd64"
-  description = "amd64 or arm64. Must match a bin/secrets_linux_<arch> built with `make release`."
+  description = "amd64 or arm64. Must match a bin/remote-secrets_linux_<arch> built with `make release`."
 
   validation {
     condition     = contains(["amd64", "arm64"], var.arch)
@@ -96,7 +96,7 @@ locals {
     TraefikVersion = var.traefik_version
     BaseImage      = "ubuntu-24.04"
     ManagedBy      = "packer"
-    Repository     = "github.com/octdanb/nomad-secret-plugin"
+    Repository     = "github.com/octdanb/nomad-remote-secrets"
   }
 }
 
@@ -147,7 +147,7 @@ build {
     use_proxy     = false
     extra_arguments = [
       "--extra-vars",
-      "nomad_version=${var.nomad_version} traefik_version=${var.traefik_version} onepassword_plugin_binary=${abspath("../bin/secrets_linux_${var.arch}")}",
+      "nomad_version=${var.nomad_version} traefik_version=${var.traefik_version} remote_secrets_plugin_binary=${abspath("../bin/remote-secrets_linux_${var.arch}")}",
     ]
   }
 

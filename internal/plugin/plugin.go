@@ -15,11 +15,11 @@ import (
 	"os"
 	"time"
 
-	"github.com/octdanb/nomad-secret-plugin/internal/cache"
-	"github.com/octdanb/nomad-secret-plugin/internal/provider"
-	"github.com/octdanb/nomad-secret-plugin/internal/provider/awssm"
-	"github.com/octdanb/nomad-secret-plugin/internal/provider/awsssm"
-	"github.com/octdanb/nomad-secret-plugin/internal/provider/onepassword"
+	"github.com/octdanb/nomad-remote-secrets/internal/cache"
+	"github.com/octdanb/nomad-remote-secrets/internal/provider"
+	"github.com/octdanb/nomad-remote-secrets/internal/provider/awssm"
+	"github.com/octdanb/nomad-remote-secrets/internal/provider/awsssm"
+	"github.com/octdanb/nomad-remote-secrets/internal/provider/onepassword"
 )
 
 // Version is reported to Nomad in the fingerprint response and used to
@@ -32,8 +32,8 @@ const Version = "0.4.0"
 // redirect the agent-level Connect token to a host the operator didn't
 // choose.
 var ConfigPaths = []string{
-	"/etc/nomad-secret/config.env",
-	"/etc/nomad.d/secrets.env",
+	"/etc/remote-secrets/config.env",
+	"/etc/nomad.d/remote-secrets.env",
 }
 
 // newRegistry builds the provider registry from the loaded configuration.
@@ -124,7 +124,7 @@ func fetch(stderr io.Writer, path string) (map[string]string, error) {
 		if err != nil {
 			// A broken cache should degrade to uncached fetches, not
 			// block deploys.
-			fmt.Fprintf(stderr, "secrets: cache disabled: %v\n", err)
+			fmt.Fprintf(stderr, "remote-secrets: cache disabled: %v\n", err)
 			store = nil
 		}
 	}
@@ -152,7 +152,7 @@ func fetch(stderr io.Writer, path string) (map[string]string, error) {
 			}
 			// This message becomes the Nomad task event the operator
 			// sees, so make it name the backend and config source.
-			return nil, fmt.Errorf("%w [backend: %s; config: %s; try `secrets check` on this node]", err, p.Describe(), cfg.Source)
+			return nil, fmt.Errorf("%w [backend: %s; config: %s; try `remote-secrets check` on this node]", err, p.Describe(), cfg.Source)
 		}
 
 		switch {
@@ -194,7 +194,7 @@ func fetchOne(ctx context.Context, stderr io.Writer, cfg Config, store *cache.Ca
 	if err != nil {
 		if store != nil && cacheable && cfg.MaxStale > 0 {
 			if stale, age, ok := store.Stale(cacheKey, cfg.MaxStale); ok {
-				fmt.Fprintf(stderr, "secrets: backend unavailable (%v); serving cached value %s old for %s\n",
+				fmt.Fprintf(stderr, "remote-secrets: backend unavailable (%v); serving cached value %s old for %s\n",
 					err, age.Round(time.Second), ref)
 				return provider.Result{Values: stale, Object: isObject(stale)}, nil
 			}
@@ -204,7 +204,7 @@ func fetchOne(ctx context.Context, stderr io.Writer, cfg Config, store *cache.Ca
 
 	if store != nil && cacheable {
 		if err := store.Put(cacheKey, result.Values); err != nil {
-			fmt.Fprintf(stderr, "secrets: failed to write cache: %v\n", err)
+			fmt.Fprintf(stderr, "remote-secrets: failed to write cache: %v\n", err)
 		}
 	}
 	return result, nil

@@ -32,7 +32,7 @@ concerns need different credentials:
   which is exactly what you need to run the ACL bootstrap against
   `https://nomad.<app>.<env>`.
 - **Service discovery needs a token, and self-heals.** Ingress nodes run a
-  systemd timer that polls 1Password (via the secrets plugin binary,
+  systemd timer that polls 1Password (via the remote-secrets plugin binary,
   using the same service-account token every node already has) for the
   `nomad-traefik-token` item. The moment step 5 stores it, nodes install it
   and restart Traefik — discovery on, timer disabled. Nodes launched later

@@ -1,16 +1,17 @@
-// nomad-secret-plugin/secrets is a multi-provider Nomad secret provider
-// plugin. Jobs use provider = "secrets" and the reference scheme selects the
-// backend at fetch time: op:// (1Password), aws-ssm: (AWS Parameter Store),
-// aws-sm: (AWS Secrets Manager).
+// nomad-remote-secrets is a multi-provider Nomad secret provider plugin. Jobs
+// use provider = "remote-secrets" and the reference scheme selects the backend
+// at fetch time: op:// (1Password), aws-ssm: (AWS Parameter Store), aws-sm:
+// (AWS Secrets Manager).
 //
 // Nomad invokes the binary with an operation as the first argument:
 //
-//	secrets fingerprint
-//	secrets fetch op://<vault>/<item>[/<section>]/<field>
+//	remote-secrets fingerprint
+//	remote-secrets fetch op://<vault>/<item>[/<section>]/<field>
 //
-// Install the binary as <client.common_plugin_dir>/secrets/secrets on every
-// Nomad client node; the executable's file name is the provider name used in
-// job specifications.
+// Install the binary as <client.common_plugin_dir>/secrets/remote-secrets on
+// every Nomad client node (the "secrets" directory is Nomad's secrets-plugin
+// type dir; the executable's file name is the provider name used in job
+// specifications).
 package main
 
 import (
@@ -18,12 +19,12 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/octdanb/nomad-secret-plugin/internal/plugin"
+	"github.com/octdanb/nomad-remote-secrets/internal/plugin"
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		fail("usage: secrets <fingerprint|fetch|check> [path]")
+		fail("usage: remote-secrets <fingerprint|fetch|check> [path]")
 	}
 
 	switch os.Args[1] {

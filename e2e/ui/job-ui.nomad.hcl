@@ -10,12 +10,12 @@ job "ui-secrets" {
       driver = "raw_exec"
 
       secret "db" {
-        provider = "secrets"
+        provider = "remote-secrets"
         path     = "op://Testing/database/password"
       }
 
       secret "app" {
-        provider = "secrets"
+        provider = "remote-secrets"
         path     = <<-EOF
           pw  = op://Testing/database/password
           rep = op://Testing/database/replica/password

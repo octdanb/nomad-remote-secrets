@@ -7,17 +7,17 @@ exec > >(tee /var/log/user-data.log | logger -t user-data) 2>&1
 
 # ------------------------------------------------------------------ 1Password
 umask 077
-install -d -m 0700 /etc/nomad-secret
+install -d -m 0700 /etc/remote-secrets
 aws ssm get-parameter --with-decryption --region "${aws_region}" \
   --name "${op_token_ssm_parameter}" \
-  --query Parameter.Value --output text > /etc/nomad-secret/token
-cat > /etc/nomad-secret/config.env <<'EOT'
-OP_SERVICE_ACCOUNT_TOKEN_FILE=/etc/nomad-secret/token
+  --query Parameter.Value --output text > /etc/remote-secrets/token
+cat > /etc/remote-secrets/config.env <<'EOT'
+OP_SERVICE_ACCOUNT_TOKEN_FILE=/etc/remote-secrets/token
 EOT
 umask 022
 
-/opt/nomad/plugins/secrets/secrets check \
-  || echo "WARNING: secrets check failed — job secrets will not resolve until fixed"
+/opt/nomad/plugins/secrets/remote-secrets check \
+  || echo "WARNING: remote-secrets check failed — job secrets will not resolve until fixed"
 
 # ---------------------------------------------------------------------- Nomad
 cat > /etc/nomad.d/runtime.hcl <<'EOT'
@@ -52,7 +52,7 @@ EOT
 %{ if traefik_acme_challenge == "dns" ~}
 # DNS-01 via Cloudflare: works with proxied records and needs no inbound
 # port 80. The API token is seeded in the cluster vault before apply.
-cf_token=$(/opt/nomad/plugins/secrets/secrets fetch "${cloudflare_token_ref}" | jq -r '.result.value // empty')
+cf_token=$(/opt/nomad/plugins/secrets/remote-secrets fetch "${cloudflare_token_ref}" | jq -r '.result.value // empty')
 if [ -z "$cf_token" ]; then
   echo "WARNING: ${cloudflare_token_ref} not found — ACME DNS-01 will fail until it exists and traefik restarts" >&2
 fi
@@ -106,7 +106,7 @@ EOT
 
 # Nomad-provider token self-fetch: the ACL playbook stores the token in
 # 1Password AFTER the cluster is up; this timer polls for it via the
-# secrets plugin binary and hot-enables service discovery when it
+# remote-secrets plugin binary and hot-enables service discovery when it
 # appears. Until then Traefik still serves the routes above.
 cat > /usr/local/bin/traefik-nomad-token <<'EOT'
 #!/usr/bin/env bash
@@ -116,7 +116,7 @@ if grep -qs ENDPOINT_TOKEN "$ENV_FILE"; then
   systemctl disable --now traefik-nomad-token.timer 2>/dev/null || true
   exit 0
 fi
-out=$(/opt/nomad/plugins/secrets/secrets fetch "${traefik_token_ref}")
+out=$(/opt/nomad/plugins/secrets/remote-secrets fetch "${traefik_token_ref}")
 tok=$(jq -r '.result.value // empty' <<<"$out")
 if [ -z "$tok" ]; then
   echo "traefik token not in 1Password yet: $(jq -r '.error // "unknown"' <<<"$out")" >&2

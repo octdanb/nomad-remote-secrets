@@ -1,4 +1,4 @@
-module github.com/octdanb/nomad-secret-plugin
+module github.com/octdanb/nomad-remote-secrets
 
 go 1.24.0
 

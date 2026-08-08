@@ -1,9 +1,9 @@
-# nomad-secret-plugin: multi-provider secrets for Nomad
+# nomad-remote-secrets: multi-provider secrets for Nomad
 
 A [Nomad secret provider plugin](https://developer.hashicorp.com/nomad/plugins/author/secret-provider)
 that resolves secret references from multiple backends so job specs can pull
 secrets at deploy time without running HashiCorp Vault. It is a **single
-scheme-routed binary** named `secrets`: jobs always say `provider = "secrets"`,
+scheme-routed binary** named `secrets`: jobs always say `provider = "remote-secrets"`,
 and the **reference scheme** selects the backend at fetch time — so one
 `secret` block may mix providers.
 
@@ -21,7 +21,7 @@ task "app" {
   driver = "docker"
 
   secret "db" {
-    provider = "secrets"
+    provider = "remote-secrets"
     path     = "op://Production/database/password"
   }
 
@@ -45,8 +45,8 @@ AWS needs credentials via the SDK default chain (see below).
 job spec                Nomad client                       backend
 ─────────               ────────────                       ───────
 secret "db" {     →     runs plugin binary:          →     op:// → 1Password
-  provider =            secrets fetch                       aws-ssm: → SSM
-    "secrets"            op://Production/database/…          aws-sm:  → Secrets Mgr
+  provider =            remote-secrets fetch                       aws-ssm: → SSM
+    "remote-secrets"        op://Production/database/…          aws-sm:  → Secrets Mgr
   path = "op://…"
 }                       ← {"result": {"password": …}}
                           │
@@ -58,7 +58,7 @@ env {                     ├─ written to on-disk cache
 
 - Nomad discovers the plugin at agent startup by executing every binary in
   `<common_plugin_dir>/secrets/` with the `fingerprint` argument.
-- For every `secret` block naming `provider = "secrets"`, Nomad executes the
+- For every `secret` block naming `provider = "remote-secrets"`, Nomad executes the
   plugin with `fetch <path>` and expects a JSON key/value result, which it
   exposes as `${secret.<name>.<key>}` interpolation variables.
 - The plugin routes each reference to a backend by its scheme, resolves it,
@@ -77,18 +77,18 @@ env {                     ├─ written to on-disk cache
 1. Build the binary (Go 1.24+):
 
    ```sh
-   make build            # → bin/secrets
+   make build            # → bin/remote-secrets
    ```
 
 2. Install it on **every Nomad client node** as
-   `<common_plugin_dir>/secrets/secrets`:
+   `<common_plugin_dir>/secrets/remote-secrets`:
 
    ```sh
    make install PLUGIN_DIR=/opt/nomad/plugins
    ```
 
-   The file name is the provider name — jobs say `provider = "secrets"`
-   because the binary is called `secrets`.
+   The file name is the provider name — jobs say `provider = "remote-secrets"`
+   because the binary is called `remote-secrets`.
 
 3. Point the client agent at the plugin directory
    ([examples/client.hcl](examples/client.hcl)):
@@ -101,28 +101,28 @@ env {                     ├─ written to on-disk cache
    ```
 
 4. Configure a backend on each node
-   ([examples/onepassword.env](examples/onepassword.env)). The config file
-   path is `/etc/nomad-secret/config.env`;
-   `/etc/nomad.d/secrets.env` is also consulted.
+   ([examples/config.env](examples/config.env)). The config file
+   path is `/etc/remote-secrets/config.env`;
+   `/etc/nomad.d/remote-secrets.env` is also consulted.
 
    **1Password** with a service account (create one in 1Password, scoped
    read-only to the vaults your jobs need):
 
    ```sh
-   install -d -m 0700 /etc/nomad-secret
-   echo "ops_eyJ..." > /etc/nomad-secret/token
-   cat > /etc/nomad-secret/config.env <<'EOF'
-   OP_SERVICE_ACCOUNT_TOKEN_FILE=/etc/nomad-secret/token
+   install -d -m 0700 /etc/remote-secrets
+   echo "ops_eyJ..." > /etc/remote-secrets/token
+   cat > /etc/remote-secrets/config.env <<'EOF'
+   OP_SERVICE_ACCOUNT_TOKEN_FILE=/etc/remote-secrets/token
    EOF
-   chmod 0600 /etc/nomad-secret/config.env /etc/nomad-secret/token
+   chmod 0600 /etc/remote-secrets/config.env /etc/remote-secrets/token
    ```
 
    Or with a self-hosted Connect server:
 
    ```sh
-   cat > /etc/nomad-secret/config.env <<'EOF'
+   cat > /etc/remote-secrets/config.env <<'EOF'
    OP_CONNECT_HOST=http://127.0.0.1:8080
-   OP_CONNECT_TOKEN_FILE=/etc/nomad-secret/token
+   OP_CONNECT_TOKEN_FILE=/etc/remote-secrets/token
    EOF
    ```
 
@@ -133,7 +133,7 @@ env {                     ├─ written to on-disk cache
    the host config so the SDK doesn't stall probing instance metadata:
 
    ```sh
-   cat > /etc/nomad-secret/config.env <<'EOF'
+   cat > /etc/remote-secrets/config.env <<'EOF'
    AWS_REGION=ap-southeast-2
    # AWS_ENDPOINT_URL=http://127.0.0.1:4566   # optional: localstack / VPC endpoint
    # Optional static credentials (otherwise the SDK default chain is used):
@@ -191,7 +191,7 @@ keeps it readable):
 
 ```hcl
 secret "app" {
-  provider = "secrets"
+  provider = "remote-secrets"
   path     = <<-EOF
     # one line per secret: <name> = <reference>
     db_password = op://Production/database/password
@@ -247,7 +247,7 @@ Value shapes:
 
 ```hcl
 secret "db" {
-  provider = "secrets"
+  provider = "remote-secrets"
   path     = <<-EOF
     password = aws-ssm:/prod/db/password
     creds    = aws-sm:prod/db/creds        # JSON → creds_username, creds_password
@@ -290,7 +290,7 @@ Named file entries are prefixed like whole items, so a `cert` entry exposes
 
 ```hcl
 secret "cert" {
-  provider = "secrets"
+  provider = "remote-secrets"
   path     = "bundle = op://Prod/tls-bundle" # a Document item
 }
 
@@ -305,7 +305,7 @@ template {
 
 ```hcl
 secret "ks" {
-  provider = "secrets"
+  provider = "remote-secrets"
   path     = "keystore = aws-sm:prod/tls/keystore" # a SecretBinary secret
 }
 
@@ -337,8 +337,8 @@ content ~33%. The error names the reference and the limit.
 
 Settings come from (highest precedence first):
 
-1. `/etc/nomad-secret/config.env`, or if absent
-   `/etc/nomad.d/secrets.env` — the host config file,
+1. `/etc/remote-secrets/config.env`, or if absent
+   `/etc/nomad.d/remote-secrets.env` — the host config file,
 2. the plugin's process environment — the Nomad agent's environment plus any
    `env {}` block in the job's `secret` block.
 
@@ -351,7 +351,7 @@ Settings come from (highest precedence first):
 | `OP_CONNECT_TOKEN_FILE` | — | File containing the Connect token (preferred) |
 | `OP_CACHE_TTL` | `5m` | Serve cached values this long without re-fetching; `0` disables |
 | `OP_CACHE_MAX_STALE` | `24h` | On Connect outage, serve values up to this old; `0` disables |
-| `OP_CACHE_DIR` | `/var/cache/nomad-secret` | Cache location |
+| `OP_CACHE_DIR` | `/var/cache/remote-secrets` | Cache location |
 | `OP_REQUEST_TIMEOUT` | `30s` | Per-fetch Connect timeout (Nomad kills fetches at 60s) |
 | `SECRET_MAX_FILE_BYTES` | `1048576` | Max raw byte length of a file-like secret; larger is rejected. `0` disables |
 
@@ -424,8 +424,8 @@ reference, what failed, and which backend and config file were active, e.g.
 ```
 entry "db_password": resolving op://Production/database/password: no vault
 named "Production" is visible to this service account [backend: 1Password
-service account; config: /etc/nomad-secret/config.env; try
-`secrets check` on this node]
+service account; config: /etc/remote-secrets/config.env; try
+`remote-secrets check` on this node]
 ```
 
 Distinct failures produce distinct messages: an invalid/expired token, a
@@ -437,18 +437,18 @@ To dig deeper, run the diagnostic on the client node:
 
 ```sh
 # verify config, backend, cache, connectivity, and token scope
-$ secrets check
-secrets provider v0.4.0 — diagnostic
+$ remote-secrets check
+remote-secrets provider v0.4.0 — diagnostic
 
-OK   config loaded from: /etc/nomad-secret/config.env
+OK   config loaded from: /etc/remote-secrets/config.env
 OK   backend: 1Password service account
      request timeout 30s, cache TTL 5m0s, max stale 24h0m0s
-OK   cache: /var/cache/nomad-secret
+OK   cache: /var/cache/remote-secrets
 OK   connectivity: 2 vault(s) visible: Infrastructure, Production
 
 # dry-run any reference (or a full multi-entry path) — prints the
 # interpolation keys that would be exposed, never the values
-$ secrets check "op://Production/database"
+$ remote-secrets check "op://Production/database"
 OK   op://Production/database → keys: host_name, password, username
 ```
 
@@ -493,8 +493,8 @@ the standard library only; the AWS backends pull in `aws-sdk-go-v2`.
 ```sh
 export OP_CONNECT_HOST=http://127.0.0.1:8080
 export OP_CONNECT_TOKEN=eyJ...
-./bin/secrets fingerprint
-./bin/secrets fetch "op://Production/database/password"
+./bin/remote-secrets fingerprint
+./bin/remote-remote-secrets fetch "op://Production/database/password"
 ```
 
 ## Limitations

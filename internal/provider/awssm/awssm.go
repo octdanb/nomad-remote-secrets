@@ -19,7 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 
-	"github.com/octdanb/nomad-secret-plugin/internal/provider"
+	"github.com/octdanb/nomad-remote-secrets/internal/provider"
 )
 
 // Scheme is the reference scheme this provider handles.
