@@ -15,6 +15,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 
 	"github.com/octdanb/nomad-secret-plugin/internal/provider"
@@ -23,15 +24,20 @@ import (
 // Scheme is the reference scheme this provider handles.
 const Scheme = "aws-ssm"
 
-// Config holds the Parameter Store backend settings. Credentials are resolved
-// by the AWS SDK's default chain (env, shared config, instance role); this
-// plugin only pins the region/profile/endpoint and the decryption default.
+// Config holds the Parameter Store backend settings. Credentials come from the
+// AWS SDK's default chain (env, shared config, instance role) unless static
+// keys are pinned here — the latter is what lets the plugin authenticate under
+// Nomad's controlled environment (and avoids stalling on instance-metadata
+// probes when no role is available).
 type Config struct {
-	Region      string        // AWS_REGION
-	Profile     string        // AWS_PROFILE
-	EndpointURL string        // AWS_ENDPOINT_URL (e.g. localstack for tests)
-	Decrypt     bool          // default true: WithDecryption for SecureString
-	Timeout     time.Duration // request timeout
+	Region          string        // AWS_REGION
+	Profile         string        // AWS_PROFILE
+	EndpointURL     string        // AWS_ENDPOINT_URL (e.g. localstack for tests)
+	AccessKeyID     string        // AWS_ACCESS_KEY_ID (optional static creds)
+	SecretAccessKey string        // AWS_SECRET_ACCESS_KEY
+	SessionToken    string        // AWS_SESSION_TOKEN
+	Decrypt         bool          // default true: WithDecryption for SecureString
+	Timeout         time.Duration // request timeout
 }
 
 // api is the slice of the SSM client this provider uses. Narrowing it to an
@@ -170,6 +176,12 @@ func (l *lazyClient) ensure(ctx context.Context) error {
 	}
 	if l.cfg.Profile != "" {
 		loadOpts = append(loadOpts, awsconfig.WithSharedConfigProfile(l.cfg.Profile))
+	}
+	// Static credentials, when configured, pin the credential source so the
+	// SDK never falls through to a (possibly absent) instance-metadata probe.
+	if l.cfg.AccessKeyID != "" {
+		loadOpts = append(loadOpts, awsconfig.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(l.cfg.AccessKeyID, l.cfg.SecretAccessKey, l.cfg.SessionToken)))
 	}
 	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, loadOpts...)
 	if err != nil {

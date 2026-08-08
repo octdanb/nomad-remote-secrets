@@ -35,10 +35,13 @@ type Config struct {
 
 	// AWS Parameter Store backend fields, used to build the aws-ssm:
 	// provider. AWS is enabled when a region or endpoint is set.
-	AWSRegion      string // AWS_REGION
-	AWSProfile     string // AWS_PROFILE
-	AWSEndpointURL string // AWS_ENDPOINT_URL (e.g. localstack)
-	AWSDecrypt     bool   // AWS_SSM_DECRYPT (default true)
+	AWSRegion          string // AWS_REGION
+	AWSProfile         string // AWS_PROFILE
+	AWSEndpointURL     string // AWS_ENDPOINT_URL (e.g. localstack)
+	AWSAccessKeyID     string // AWS_ACCESS_KEY_ID (optional static creds)
+	AWSSecretAccessKey string // AWS_SECRET_ACCESS_KEY
+	AWSSessionToken    string // AWS_SESSION_TOKEN
+	AWSDecrypt         bool   // AWS_SSM_DECRYPT (default true)
 
 	// Source records where the settings came from — the loaded config
 	// file path, or "agent environment" — so error messages can point
@@ -136,6 +139,9 @@ func LoadConfig(paths []string, getenv func(string) string) (Config, error) {
 	cfg.AWSRegion = lookup("AWS_REGION")
 	cfg.AWSProfile = lookup("AWS_PROFILE")
 	cfg.AWSEndpointURL = strings.TrimRight(lookup("AWS_ENDPOINT_URL"), "/")
+	cfg.AWSAccessKeyID = lookup("AWS_ACCESS_KEY_ID")
+	cfg.AWSSecretAccessKey = lookup("AWS_SECRET_ACCESS_KEY")
+	cfg.AWSSessionToken = lookup("AWS_SESSION_TOKEN")
 	cfg.AWSDecrypt = true
 	if v := lookup("AWS_SSM_DECRYPT"); v != "" {
 		cfg.AWSDecrypt = v != "false"

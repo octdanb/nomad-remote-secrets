@@ -138,6 +138,21 @@ func TestAWSOnlyConfigIsValid(t *testing.T) {
 	}
 }
 
+func TestAWSStaticCredentialsLoaded(t *testing.T) {
+	cfg, err := LoadConfig(nil, envMap(map[string]string{
+		"AWS_REGION":            "us-east-1",
+		"AWS_ACCESS_KEY_ID":     "AKIAEXAMPLE",
+		"AWS_SECRET_ACCESS_KEY": "secret",
+		"AWS_SESSION_TOKEN":     "token",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.AWSAccessKeyID != "AKIAEXAMPLE" || cfg.AWSSecretAccessKey != "secret" || cfg.AWSSessionToken != "token" {
+		t.Errorf("static creds not loaded: %+v", cfg)
+	}
+}
+
 func TestAWSEndpointOnlyIsValid(t *testing.T) {
 	cfg, err := LoadConfig(nil, envMap(map[string]string{
 		"AWS_ENDPOINT_URL": "http://localhost:4566/",

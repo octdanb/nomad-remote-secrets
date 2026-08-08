@@ -75,11 +75,14 @@ func Check(w io.Writer, path string) int {
 
 	if cfg.AWSEnabled() {
 		aws := awsssm.New(awsssm.Config{
-			Region:      cfg.AWSRegion,
-			Profile:     cfg.AWSProfile,
-			EndpointURL: cfg.AWSEndpointURL,
-			Decrypt:     cfg.AWSDecrypt,
-			Timeout:     cfg.Timeout,
+			Region:          cfg.AWSRegion,
+			Profile:         cfg.AWSProfile,
+			EndpointURL:     cfg.AWSEndpointURL,
+			AccessKeyID:     cfg.AWSAccessKeyID,
+			SecretAccessKey: cfg.AWSSecretAccessKey,
+			SessionToken:    cfg.AWSSessionToken,
+			Decrypt:         cfg.AWSDecrypt,
+			Timeout:         cfg.Timeout,
 		})
 		if err := aws.Ping(ctx); err != nil {
 			fmt.Fprintf(w, "FAIL AWS connectivity: %v\n", err)
@@ -89,10 +92,13 @@ func Check(w io.Writer, path string) int {
 		fmt.Fprintf(w, "OK   AWS connectivity: %s reachable\n", aws.Describe())
 
 		sm := awssm.New(awssm.Config{
-			Region:      cfg.AWSRegion,
-			Profile:     cfg.AWSProfile,
-			EndpointURL: cfg.AWSEndpointURL,
-			Timeout:     cfg.Timeout,
+			Region:          cfg.AWSRegion,
+			Profile:         cfg.AWSProfile,
+			EndpointURL:     cfg.AWSEndpointURL,
+			AccessKeyID:     cfg.AWSAccessKeyID,
+			SecretAccessKey: cfg.AWSSecretAccessKey,
+			SessionToken:    cfg.AWSSessionToken,
+			Timeout:         cfg.Timeout,
 		})
 		if err := sm.Ping(ctx); err != nil {
 			fmt.Fprintf(w, "FAIL AWS connectivity: %v\n", err)

@@ -57,18 +57,24 @@ func newRegistry(cfg Config) *provider.Registry {
 		// Parameter Store and Secrets Manager share the same AWS enablement
 		// (region or endpoint) and coexist under different schemes.
 		reg.Register(awsssm.Scheme, awsssm.New(awsssm.Config{
-			Region:      cfg.AWSRegion,
-			Profile:     cfg.AWSProfile,
-			EndpointURL: cfg.AWSEndpointURL,
-			Decrypt:     cfg.AWSDecrypt,
-			Timeout:     cfg.Timeout,
+			Region:          cfg.AWSRegion,
+			Profile:         cfg.AWSProfile,
+			EndpointURL:     cfg.AWSEndpointURL,
+			AccessKeyID:     cfg.AWSAccessKeyID,
+			SecretAccessKey: cfg.AWSSecretAccessKey,
+			SessionToken:    cfg.AWSSessionToken,
+			Decrypt:         cfg.AWSDecrypt,
+			Timeout:         cfg.Timeout,
 		}))
 		reg.Register(awssm.Scheme, awssm.New(awssm.Config{
-			Region:       cfg.AWSRegion,
-			Profile:      cfg.AWSProfile,
-			EndpointURL:  cfg.AWSEndpointURL,
-			Timeout:      cfg.Timeout,
-			MaxFileBytes: cfg.MaxFileBytes,
+			Region:          cfg.AWSRegion,
+			Profile:         cfg.AWSProfile,
+			EndpointURL:     cfg.AWSEndpointURL,
+			AccessKeyID:     cfg.AWSAccessKeyID,
+			SecretAccessKey: cfg.AWSSecretAccessKey,
+			SessionToken:    cfg.AWSSessionToken,
+			Timeout:         cfg.Timeout,
+			MaxFileBytes:    cfg.MaxFileBytes,
 		}))
 	}
 	return reg

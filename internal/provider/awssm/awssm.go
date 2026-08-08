@@ -16,6 +16,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 
 	"github.com/octdanb/nomad-secret-plugin/internal/provider"
@@ -29,11 +30,14 @@ const Scheme = "aws-sm"
 // plugin only pins the region/profile/endpoint. There is no Decrypt setting —
 // Secrets Manager decrypts server-side.
 type Config struct {
-	Region       string        // AWS_REGION
-	Profile      string        // AWS_PROFILE
-	EndpointURL  string        // AWS_ENDPOINT_URL (e.g. localstack for tests)
-	Timeout      time.Duration // request timeout
-	MaxFileBytes int64         // SECRET_MAX_FILE_BYTES (0 disables), applied to binary secrets
+	Region          string        // AWS_REGION
+	Profile         string        // AWS_PROFILE
+	EndpointURL     string        // AWS_ENDPOINT_URL (e.g. localstack for tests)
+	AccessKeyID     string        // AWS_ACCESS_KEY_ID (optional static creds)
+	SecretAccessKey string        // AWS_SECRET_ACCESS_KEY
+	SessionToken    string        // AWS_SESSION_TOKEN
+	Timeout         time.Duration // request timeout
+	MaxFileBytes    int64         // SECRET_MAX_FILE_BYTES (0 disables), applied to binary secrets
 }
 
 // api is the slice of the Secrets Manager client this provider uses. Narrowing
@@ -214,6 +218,12 @@ func (l *lazyClient) ensure(ctx context.Context) error {
 	}
 	if l.cfg.Profile != "" {
 		loadOpts = append(loadOpts, awsconfig.WithSharedConfigProfile(l.cfg.Profile))
+	}
+	// Static credentials, when configured, pin the credential source so the
+	// SDK never falls through to a (possibly absent) instance-metadata probe.
+	if l.cfg.AccessKeyID != "" {
+		loadOpts = append(loadOpts, awsconfig.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(l.cfg.AccessKeyID, l.cfg.SecretAccessKey, l.cfg.SessionToken)))
 	}
 	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, loadOpts...)
 	if err != nil {
