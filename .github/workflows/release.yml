@@ -1,12 +1,15 @@
 name: Release
 
-# Publishes compiled plugin binaries as GitHub Release assets. Trigger by
-# pushing a semver tag that matches the plugin Version, e.g.:
+# Publishes the compiled multi-provider secret plugin as GitHub Release
+# assets. The provider name is `secrets` (the reference scheme selects the
+# backend). Trigger by pushing a semver tag that matches the plugin Version:
 #
-#   git tag v0.4.0 && git push origin v0.4.0
+#   git tag v0.5.0 && git push origin v0.5.0
 #
-# Produces onepassword_linux_amd64, onepassword_linux_arm64, and a
-# SHA256SUMS file that Ansible can pin against with `checksum:`.
+# Produces secrets_linux_amd64, secrets_linux_arm64, and a SHA256SUMS file
+# that Ansible can pin against with `checksum:`. For back-compat with any
+# existing Ansible pin, identical onepassword_linux_{amd64,arm64} copies are
+# also published (same bytes; the binary dispatches on argv, not filename).
 
 on:
   push:
@@ -31,14 +34,22 @@ jobs:
       - name: Build linux binaries
         run: make release
 
+      - name: Back-compat onepassword copies
+        working-directory: bin
+        run: |
+          cp secrets_linux_amd64 onepassword_linux_amd64
+          cp secrets_linux_arm64 onepassword_linux_arm64
+
       - name: Checksums
         working-directory: bin
-        run: sha256sum onepassword_linux_amd64 onepassword_linux_arm64 > SHA256SUMS
+        run: sha256sum secrets_linux_amd64 secrets_linux_arm64 onepassword_linux_amd64 onepassword_linux_arm64 > SHA256SUMS
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           files: |
+            bin/secrets_linux_amd64
+            bin/secrets_linux_arm64
             bin/onepassword_linux_amd64
             bin/onepassword_linux_arm64
             bin/SHA256SUMS

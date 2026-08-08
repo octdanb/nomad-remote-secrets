@@ -313,7 +313,7 @@ func TestFetchErrorNamesBackendAndConfig(t *testing.T) {
 	setupEnv(t, srv.URL)
 
 	resp := runFetch(t, "op://Prod/database/nope")
-	for _, want := range []string{"backend: 1Password Connect", "config: agent environment", "onepassword check"} {
+	for _, want := range []string{"backend: 1Password Connect", "config: agent environment", "secrets check"} {
 		if !strings.Contains(resp.Error, want) {
 			t.Errorf("error %q should contain %q", resp.Error, want)
 		}

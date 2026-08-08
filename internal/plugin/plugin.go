@@ -4,7 +4,7 @@
 // Nomad runs the binary as `<plugin> fingerprint` when the client agent
 // starts, and `<plugin> fetch <path>` for every secret block that names this
 // provider. Both operations must print a single JSON object to stdout. The
-// reference scheme selects the backend at fetch time (only op:// today).
+// reference scheme selects the backend at fetch time (op://, aws-ssm:, aws-sm:).
 package plugin
 
 import (
@@ -118,7 +118,7 @@ func fetch(stderr io.Writer, path string) (map[string]string, error) {
 		if err != nil {
 			// A broken cache should degrade to uncached fetches, not
 			// block deploys.
-			fmt.Fprintf(stderr, "onepassword: cache disabled: %v\n", err)
+			fmt.Fprintf(stderr, "secrets: cache disabled: %v\n", err)
 			store = nil
 		}
 	}
@@ -146,7 +146,7 @@ func fetch(stderr io.Writer, path string) (map[string]string, error) {
 			}
 			// This message becomes the Nomad task event the operator
 			// sees, so make it name the backend and config source.
-			return nil, fmt.Errorf("%w [backend: %s; config: %s; try `onepassword check` on this node]", err, p.Describe(), cfg.Source)
+			return nil, fmt.Errorf("%w [backend: %s; config: %s; try `secrets check` on this node]", err, p.Describe(), cfg.Source)
 		}
 
 		switch {
@@ -188,7 +188,7 @@ func fetchOne(ctx context.Context, stderr io.Writer, cfg Config, store *cache.Ca
 	if err != nil {
 		if store != nil && cacheable && cfg.MaxStale > 0 {
 			if stale, age, ok := store.Stale(cacheKey, cfg.MaxStale); ok {
-				fmt.Fprintf(stderr, "onepassword: backend unavailable (%v); serving cached value %s old for %s\n",
+				fmt.Fprintf(stderr, "secrets: backend unavailable (%v); serving cached value %s old for %s\n",
 					err, age.Round(time.Second), ref)
 				return provider.Result{Values: stale, Object: isObject(stale)}, nil
 			}
@@ -198,7 +198,7 @@ func fetchOne(ctx context.Context, stderr io.Writer, cfg Config, store *cache.Ca
 
 	if store != nil && cacheable {
 		if err := store.Put(cacheKey, result.Values); err != nil {
-			fmt.Fprintf(stderr, "onepassword: failed to write cache: %v\n", err)
+			fmt.Fprintf(stderr, "secrets: failed to write cache: %v\n", err)
 		}
 	}
 	return result, nil

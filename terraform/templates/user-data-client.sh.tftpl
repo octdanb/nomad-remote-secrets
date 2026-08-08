@@ -16,8 +16,8 @@ OP_SERVICE_ACCOUNT_TOKEN_FILE=/etc/nomad-secret-onepassword/token
 EOT
 umask 022
 
-/opt/nomad/plugins/secrets/onepassword check \
-  || echo "WARNING: onepassword check failed — job secrets will not resolve until fixed"
+/opt/nomad/plugins/secrets/secrets check \
+  || echo "WARNING: secrets check failed — job secrets will not resolve until fixed"
 
 # ---------------------------------------------------------------------- Nomad
 cat > /etc/nomad.d/runtime.hcl <<'EOT'
@@ -52,7 +52,7 @@ EOT
 %{ if traefik_acme_challenge == "dns" ~}
 # DNS-01 via Cloudflare: works with proxied records and needs no inbound
 # port 80. The API token is seeded in the cluster vault before apply.
-cf_token=$(/opt/nomad/plugins/secrets/onepassword fetch "${cloudflare_token_ref}" | jq -r '.result.value // empty')
+cf_token=$(/opt/nomad/plugins/secrets/secrets fetch "${cloudflare_token_ref}" | jq -r '.result.value // empty')
 if [ -z "$cf_token" ]; then
   echo "WARNING: ${cloudflare_token_ref} not found — ACME DNS-01 will fail until it exists and traefik restarts" >&2
 fi
@@ -116,7 +116,7 @@ if grep -qs ENDPOINT_TOKEN "$ENV_FILE"; then
   systemctl disable --now traefik-nomad-token.timer 2>/dev/null || true
   exit 0
 fi
-out=$(/opt/nomad/plugins/secrets/onepassword fetch "${traefik_token_ref}")
+out=$(/opt/nomad/plugins/secrets/secrets fetch "${traefik_token_ref}")
 tok=$(jq -r '.result.value // empty' <<<"$out")
 if [ -z "$tok" ]; then
   echo "traefik token not in 1Password yet: $(jq -r '.error // "unknown"' <<<"$out")" >&2

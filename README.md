@@ -1,25 +1,27 @@
-# nomad-secret-plugin: 1Password for Nomad
+# nomad-secret-plugin: multi-provider secrets for Nomad
 
 A [Nomad secret provider plugin](https://developer.hashicorp.com/nomad/plugins/author/secret-provider)
-that resolves 1Password secret references — `op://vault/item/field` — so job
-specs can pull secrets straight from 1Password without running HashiCorp
-Vault. Two backends are supported:
+that resolves secret references from multiple backends so job specs can pull
+secrets at deploy time without running HashiCorp Vault. It is a **single
+scheme-routed binary** named `secrets`: jobs always say `provider = "secrets"`,
+and the **reference scheme** selects the backend at fetch time — so one
+`secret` block may mix providers.
 
-- **[Service accounts](https://developer.1password.com/docs/service-accounts/)**
-  (recommended start): a single vault-scoped `ops_...` token per client node,
-  talking directly to 1password.com. No servers to run.
-- **[1Password Connect](https://developer.1password.com/docs/connect/)**: a
-  self-hosted sync server, for high fetch volumes or clients without internet
-  egress.
+| Provider | Scheme | Example |
+|---|---|---|
+| [1Password](https://developer.1password.com/) | `op://` | `op://Production/database/password` |
+| [AWS Parameter Store](https://docs.aws.amazon.com/systems-manager/latest/userguide/systems-manager-parameter-store.html) | `aws-ssm:` | `aws-ssm:/prod/db/password` or a parameter ARN |
+| [AWS Secrets Manager](https://docs.aws.amazon.com/secretsmanager/) | `aws-sm:` | `aws-sm:prod/db/creds` or a secret ARN |
 
-Job specs are identical on both; switching backends is a host config change.
+Credentials come only from host config / the Nomad agent environment, never
+from the job — the scheme in a path selects a backend, not credentials.
 
 ```hcl
 task "app" {
   driver = "docker"
 
   secret "db" {
-    provider = "onepassword"
+    provider = "secrets"
     path     = "op://Production/database/password"
   }
 
@@ -29,21 +31,29 @@ task "app" {
 }
 ```
 
-At deploy time the Nomad client fetches the secret from Connect, caches it
+At deploy time the Nomad client fetches the secret from the backend, caches it
 locally, and interpolates it into the task — here as an environment variable
 inside the Docker container. Secrets never appear in the job spec itself.
 
-Requires **Nomad 1.11.0+** (the release that introduced the `secret` block
-and custom secret providers) and a running 1Password Connect server.
+> **Back-compat: `provider = "onepassword"` still works.** This plugin was
+> previously the 1Password-only `onepassword` plugin. The `install` targets lay
+> the same binary down under both `secrets` and `onepassword` in
+> `<plugin_dir>/secrets/` (the binary dispatches on its operation argument, not
+> its filename), and the host config path `/etc/nomad-secret-onepassword/`
+> keeps working. Existing jobs and clusters need no change.
+
+Requires **Nomad 1.11.0+** (the release that introduced the `secret` block and
+custom secret providers). 1Password needs a service account or Connect server;
+AWS needs credentials via the SDK default chain (see below).
 
 ## How it works
 
 ```
-job spec                Nomad client                       1Password
-─────────               ────────────                       ─────────
-secret "db" {     →     runs plugin binary:          →     Connect API
-  provider =            onepassword fetch                  GET /v1/vaults/…
-    "onepassword"         op://Production/database/…       GET /v1/…/items/…
+job spec                Nomad client                       backend
+─────────               ────────────                       ───────
+secret "db" {     →     runs plugin binary:          →     op:// → 1Password
+  provider =            secrets fetch                       aws-ssm: → SSM
+    "secrets"            op://Production/database/…          aws-sm:  → Secrets Mgr
   path = "op://…"
 }                       ← {"result": {"password": …}}
                           │
@@ -55,11 +65,12 @@ env {                     ├─ written to on-disk cache
 
 - Nomad discovers the plugin at agent startup by executing every binary in
   `<common_plugin_dir>/secrets/` with the `fingerprint` argument.
-- For every `secret` block naming `provider = "onepassword"`, Nomad executes
-  the plugin with `fetch <path>` and expects a JSON key/value result, which
-  it exposes as `${secret.<name>.<key>}` interpolation variables.
-- The plugin resolves the `op://` reference against Connect, returns the
-  values, and caches them on disk (see [Caching](#caching)).
+- For every `secret` block naming `provider = "secrets"` (or the back-compat
+  `provider = "onepassword"`), Nomad executes the plugin with `fetch <path>`
+  and expects a JSON key/value result, which it exposes as
+  `${secret.<name>.<key>}` interpolation variables.
+- The plugin routes each reference to a backend by its scheme, resolves it,
+  returns the values, and caches them on disk (see [Caching](#caching)).
 
 ## Installation
 
@@ -74,18 +85,20 @@ env {                     ├─ written to on-disk cache
 1. Build the binary (Go 1.24+):
 
    ```sh
-   make build            # → bin/onepassword
+   make build            # → bin/secrets
    ```
 
 2. Install it on **every Nomad client node** as
-   `<common_plugin_dir>/secrets/onepassword`:
+   `<common_plugin_dir>/secrets/secrets`:
 
    ```sh
    make install PLUGIN_DIR=/opt/nomad/plugins
    ```
 
-   The file name is the provider name — jobs say `provider = "onepassword"`
-   because the binary is called `onepassword`.
+   The file name is the provider name — jobs say `provider = "secrets"`
+   because the binary is called `secrets`. `make install` also creates an
+   `onepassword` symlink to the same binary in that directory, so
+   `provider = "onepassword"` jobs keep resolving.
 
 3. Point the client agent at the plugin directory
    ([examples/client.hcl](examples/client.hcl)):
@@ -97,10 +110,13 @@ env {                     ├─ written to on-disk cache
    }
    ```
 
-4. Configure the backend on each node
-   ([examples/onepassword.env](examples/onepassword.env)). With a service
-   account (create one in 1Password, scoped read-only to the vaults your
-   jobs need):
+4. Configure a backend on each node
+   ([examples/onepassword.env](examples/onepassword.env)). The config file
+   path is `/etc/nomad-secret-onepassword/config.env` (kept for back-compat;
+   `/etc/nomad.d/onepassword.env` is also consulted).
+
+   **1Password** with a service account (create one in 1Password, scoped
+   read-only to the vaults your jobs need):
 
    ```sh
    install -d -m 0700 /etc/nomad-secret-onepassword
@@ -120,15 +136,36 @@ env {                     ├─ written to on-disk cache
    EOF
    ```
 
+   **AWS** (Parameter Store / Secrets Manager) — set the region and let the
+   [AWS SDK default credential chain](https://docs.aws.amazon.com/sdkref/latest/guide/standardized-credentials.html)
+   supply credentials (instance profile / IRSA on EC2/ECS, or
+   `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, or `~/.aws`):
+
+   ```sh
+   cat > /etc/nomad-secret-onepassword/config.env <<'EOF'
+   AWS_REGION=ap-southeast-2
+   # AWS_ENDPOINT_URL=http://127.0.0.1:4566   # optional: localstack / VPC endpoint
+   EOF
+   ```
+
+   Backends coexist: configure any subset. Each reference's scheme picks the
+   backend, so a single node can serve `op://`, `aws-ssm:`, and `aws-sm:`.
+
 5. Restart (or SIGHUP) the Nomad client and confirm registration:
 
    ```sh
-   nomad node status -verbose $(nomad node status -quiet -self) | grep onepassword
+   nomad node status -verbose $(nomad node status -quiet -self) | grep secrets
    ```
 
 ## Secret references
 
-The `path` parameter accepts standard 1Password secret reference syntax:
+The `path` parameter accepts a reference whose scheme selects the backend.
+The 1Password (`op://`) syntax is documented in detail below; the AWS schemes
+are covered in [AWS references](#aws-references).
+
+### 1Password references
+
+The `op://` scheme accepts standard 1Password secret reference syntax:
 
 | Reference                                | Resolves to |
 |------------------------------------------|-------------|
@@ -190,6 +227,49 @@ See [examples/smspit.nomad.hcl](examples/smspit.nomad.hcl) for a complete job.
 
 `secret` blocks can sit at the job, group, or task level; task level keeps a
 secret scoped to the one task that needs it.
+
+## AWS references
+
+Both AWS backends need only `AWS_REGION` (plus optional `AWS_ENDPOINT_URL`)
+in the host config; credentials come from the AWS SDK default chain (see
+[Installation](#installation), step 4). The scheme selects the service:
+
+| Reference | Resolves to |
+|---|---|
+| `aws-ssm:/prod/db/password` | a Parameter Store parameter; `SecureString` is decrypted |
+| `aws-ssm:arn:aws:ssm:…:parameter/prod/db/password` | the same, by ARN |
+| `aws-sm:prod/db/creds` | a Secrets Manager secret's `SecretString` |
+| `aws-sm:arn:aws:secretsmanager:…:secret:prod/db/creds-AbCdEf` | the same, by ARN |
+
+Value shapes:
+
+- A plain string is exposed as `${secret.<name>.value}`.
+- A value that parses as a **JSON object** auto-expands: each key becomes
+  `${secret.<name>.<key>}` (sanitized), and the raw string stays at
+  `${secret.<name>.value}`. This mirrors the whole-item behavior of 1Password.
+- Secrets Manager **binary** secrets (`SecretBinary`) are detected and exposed
+  as `value_base64` (see [File-like secrets](#file-like-secrets)).
+
+```hcl
+secret "db" {
+  provider = "secrets"
+  path     = <<-EOF
+    password = aws-ssm:/prod/db/password
+    creds    = aws-sm:prod/db/creds        # JSON → creds_username, creds_password
+  EOF
+}
+
+env {
+  DB_PASSWORD = "${secret.db.password}"
+  DB_USER     = "${secret.db.creds_username}"
+  DB_PASS     = "${secret.db.creds_password}"
+}
+```
+
+The multi-entry syntax, JSON auto-expansion, fail-closed behavior, and
+per-reference caching described under
+[Multiple secrets in one block](#multiple-secrets-in-one-block) apply to every
+scheme, and a single block may mix `op://`, `aws-ssm:`, and `aws-sm:` entries.
 
 ## File-like secrets
 
@@ -350,7 +430,7 @@ reference, what failed, and which backend and config file were active, e.g.
 entry "db_password": resolving op://Production/database/password: no vault
 named "Production" is visible to this service account [backend: 1Password
 service account; config: /etc/nomad-secret-onepassword/config.env; try
-`onepassword check` on this node]
+`secrets check` on this node]
 ```
 
 Distinct failures produce distinct messages: an invalid/expired token, a
@@ -362,8 +442,8 @@ To dig deeper, run the diagnostic on the client node:
 
 ```sh
 # verify config, backend, cache, connectivity, and token scope
-$ onepassword check
-onepassword secret provider v0.4.0 — diagnostic
+$ secrets check
+secrets provider v0.4.0 — diagnostic
 
 OK   config loaded from: /etc/nomad-secret-onepassword/config.env
 OK   backend: 1Password service account
@@ -373,7 +453,7 @@ OK   connectivity: 2 vault(s) visible: Infrastructure, Production
 
 # dry-run any reference (or a full multi-entry path) — prints the
 # interpolation keys that would be exposed, never the values
-$ onepassword check "op://Production/database"
+$ secrets check "op://Production/database"
 OK   op://Production/database → keys: host_name, password, username
 ```
 
@@ -410,21 +490,23 @@ make build     # static binary for the current platform
 make release   # linux/amd64 + linux/arm64
 ```
 
-The plugin is dependency-free Go (standard library only).
+The plugin is CGO-free and builds a static binary. The 1Password backends use
+the standard library only; the AWS backends pull in `aws-sdk-go-v2`.
 
 ### Manual smoke test
 
 ```sh
 export OP_CONNECT_HOST=http://127.0.0.1:8080
 export OP_CONNECT_TOKEN=eyJ...
-./bin/onepassword fingerprint
-./bin/onepassword fetch "op://Production/database/password"
+./bin/secrets fingerprint
+./bin/secrets fetch "op://Production/database/password"
 ```
 
 ## Limitations
 
-- Document/file attachments on items are not supported — only fields.
-- `?attribute=otp` is the only supported query attribute.
+- Supported query attributes are `?attribute=otp`, `?attribute=file`,
+  `?encoding=base64` (1Password) and `?binary`, `?encoding=base64`
+  (Secrets Manager); see [File-like secrets](#file-like-secrets).
 - The `env {}` block in a `secret` stanza does not support Nomad variable
   interpolation (values arrive as literal strings — a
   [known Nomad limitation](https://github.com/hashicorp/nomad/issues/27569)).

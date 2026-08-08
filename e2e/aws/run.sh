@@ -50,7 +50,9 @@ aws_sm() {
 echo "==> building and installing plugin"
 make build
 $SUDO install -d "$PLUGIN_DIR/secrets"
-$SUDO install -m 0755 bin/onepassword "$PLUGIN_DIR/secrets/secrets"
+$SUDO install -m 0755 bin/secrets "$PLUGIN_DIR/secrets/secrets"
+# Back-compat alias (same binary; this AWS job uses provider = "secrets").
+$SUDO ln -sf secrets "$PLUGIN_DIR/secrets/onepassword"
 
 echo "==> starting localstack (SSM + Secrets Manager)"
 LOCALSTACK_ID=$(docker run -d -p 4566:4566 -e SERVICES=ssm,secretsmanager localstack/localstack)
