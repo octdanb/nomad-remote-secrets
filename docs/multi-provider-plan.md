@@ -14,7 +14,7 @@ a pattern for **file-like secrets** (documents, attachments, binary secrets).
   stays at `${secret.block.value}`. Mirrors 1Password whole-item behavior.
 - **Credentials only from host config / agent env, never the job.** The scheme
   in a job's path selects a backend, not credentials — no redirection risk.
-- Back-compat: the `onepassword` binary name and `/etc/nomad-secret-onepassword/`
+- Back-compat: the `onepassword` binary name and `/etc/nomad-secret/`
   config path keep working via install aliases.
 
 ### Reference schemes

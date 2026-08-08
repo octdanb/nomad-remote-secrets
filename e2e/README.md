@@ -5,7 +5,7 @@ Proves the full chain with a **real Nomad agent**: plugin fingerprinting,
 whole item), and interpolation into the task environment.
 
 ```
-nomad agent -dev ── fingerprint ──> onepassword plugin
+nomad agent -dev ── fingerprint ──> secrets plugin
       │                                   │
   job with secret{} blocks           1Password
       │                        (fake Connect, or real via
@@ -32,7 +32,7 @@ E2E_MODE=real \
 
 Needs `nomad` (≥ 1.11) on PATH (or `NOMAD_BIN=...`), Go, jq, and root/sudo
 (the dev agent's client mode requires it). The runner writes the plugin's
-host config to `/etc/nomad-secret-onepassword/` with caching disabled so
+host config to `/etc/nomad-secret/` with caching disabled so
 every fetch is live.
 
 ## CI

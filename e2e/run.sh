@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end test: a real Nomad agent fingerprints the secrets plugin, runs a
 # job whose secret blocks resolve through 1Password, and the secret values
-# land in the task environment. The OP jobs use provider = "onepassword", so
+# land in the task environment. The OP jobs use provider = "secrets", so
 # this also exercises the back-compat install alias.
 #
 #   E2E_DRIVER=docker|raw_exec   task driver               (default docker)
@@ -39,12 +39,9 @@ echo "==> building and installing plugin"
 make build
 $SUDO install -d "$PLUGIN_DIR/secrets"
 $SUDO install -m 0755 bin/secrets "$PLUGIN_DIR/secrets/secrets"
-# Back-compat alias: the OP e2e jobs use provider = "onepassword", so install
-# the same binary under that name too (dispatches on argv, not filename).
-$SUDO ln -sf secrets "$PLUGIN_DIR/secrets/onepassword"
 
 echo "==> configuring 1Password backend ($MODE)"
-$SUDO install -d -m 0700 /etc/nomad-secret-onepassword
+$SUDO install -d -m 0700 /etc/nomad-secret
 if [ "$MODE" = "fake" ]; then
   go run ./e2e/fakeconnect >/tmp/nomad-e2e-connect.log 2>&1 &
   CONNECT_PID=$!
@@ -53,7 +50,7 @@ if [ "$MODE" = "fake" ]; then
     sleep 0.5
   done
   # Caching off so every fetch exercises the live path.
-  $SUDO tee /etc/nomad-secret-onepassword/config.env >/dev/null <<'EOF'
+  $SUDO tee /etc/nomad-secret/config.env >/dev/null <<'EOF'
 OP_CONNECT_HOST=http://127.0.0.1:8999
 OP_CONNECT_TOKEN=e2e-test-token
 OP_CACHE_TTL=0
@@ -73,10 +70,10 @@ EOF
 else
   : "${OP_SERVICE_ACCOUNT_TOKEN:?real mode needs OP_SERVICE_ACCOUNT_TOKEN}"
   : "${OP_E2E_SECRET_PATH:?real mode needs OP_E2E_SECRET_PATH (op://... reference)}"
-  printf '%s' "$OP_SERVICE_ACCOUNT_TOKEN" | $SUDO tee /etc/nomad-secret-onepassword/token >/dev/null
-  $SUDO chmod 0600 /etc/nomad-secret-onepassword/token
-  $SUDO tee /etc/nomad-secret-onepassword/config.env >/dev/null <<'EOF'
-OP_SERVICE_ACCOUNT_TOKEN_FILE=/etc/nomad-secret-onepassword/token
+  printf '%s' "$OP_SERVICE_ACCOUNT_TOKEN" | $SUDO tee /etc/nomad-secret/token >/dev/null
+  $SUDO chmod 0600 /etc/nomad-secret/token
+  $SUDO tee /etc/nomad-secret/config.env >/dev/null <<'EOF'
+OP_SERVICE_ACCOUNT_TOKEN_FILE=/etc/nomad-secret/token
 OP_CACHE_TTL=0
 OP_CACHE_MAX_STALE=0
 EOF

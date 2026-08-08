@@ -1,6 +1,6 @@
 # Example: running smspit with secrets pulled from 1Password at deploy time.
 #
-# Each `secret` block is resolved by the onepassword provider plugin on the
+# Each `secret` block is resolved by the secrets provider plugin on the
 # Nomad client when the task starts. The fetched key/value pairs are then
 # available anywhere in the task via ${secret.<block_name>.<key>} — here they
 # are injected as environment variables into the Docker container.
@@ -22,7 +22,7 @@ job "smspit" {
       # Single-field entries are exposed under their name; whole-item
       # entries (like twilio) expose every field prefixed with the name.
       secret "app" {
-        provider = "onepassword"
+        provider = "secrets"
         path     = <<-EOF
           dashboard_token = op://Infrastructure/smspit/dashboard_token
           twilio          = op://Infrastructure/twilio-prod
@@ -32,7 +32,7 @@ job "smspit" {
       # The one-block-per-secret form works too:
       #
       #   secret "dashboard" {
-      #     provider = "onepassword"
+      #     provider = "secrets"
       #     path     = "op://Infrastructure/smspit/dashboard_token"
       #   }
       #

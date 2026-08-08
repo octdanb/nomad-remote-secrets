@@ -35,13 +35,6 @@ At deploy time the Nomad client fetches the secret from the backend, caches it
 locally, and interpolates it into the task — here as an environment variable
 inside the Docker container. Secrets never appear in the job spec itself.
 
-> **Back-compat: `provider = "onepassword"` still works.** This plugin was
-> previously the 1Password-only `onepassword` plugin. The `install` targets lay
-> the same binary down under both `secrets` and `onepassword` in
-> `<plugin_dir>/secrets/` (the binary dispatches on its operation argument, not
-> its filename), and the host config path `/etc/nomad-secret-onepassword/`
-> keeps working. Existing jobs and clusters need no change.
-
 Requires **Nomad 1.11.0+** (the release that introduced the `secret` block and
 custom secret providers). 1Password needs a service account or Connect server;
 AWS needs credentials via the SDK default chain (see below).
@@ -65,10 +58,9 @@ env {                     ├─ written to on-disk cache
 
 - Nomad discovers the plugin at agent startup by executing every binary in
   `<common_plugin_dir>/secrets/` with the `fingerprint` argument.
-- For every `secret` block naming `provider = "secrets"` (or the back-compat
-  `provider = "onepassword"`), Nomad executes the plugin with `fetch <path>`
-  and expects a JSON key/value result, which it exposes as
-  `${secret.<name>.<key>}` interpolation variables.
+- For every `secret` block naming `provider = "secrets"`, Nomad executes the
+  plugin with `fetch <path>` and expects a JSON key/value result, which it
+  exposes as `${secret.<name>.<key>}` interpolation variables.
 - The plugin routes each reference to a backend by its scheme, resolves it,
   returns the values, and caches them on disk (see [Caching](#caching)).
 
@@ -96,9 +88,7 @@ env {                     ├─ written to on-disk cache
    ```
 
    The file name is the provider name — jobs say `provider = "secrets"`
-   because the binary is called `secrets`. `make install` also creates an
-   `onepassword` symlink to the same binary in that directory, so
-   `provider = "onepassword"` jobs keep resolving.
+   because the binary is called `secrets`.
 
 3. Point the client agent at the plugin directory
    ([examples/client.hcl](examples/client.hcl)):
@@ -112,27 +102,27 @@ env {                     ├─ written to on-disk cache
 
 4. Configure a backend on each node
    ([examples/onepassword.env](examples/onepassword.env)). The config file
-   path is `/etc/nomad-secret-onepassword/config.env` (kept for back-compat;
-   `/etc/nomad.d/onepassword.env` is also consulted).
+   path is `/etc/nomad-secret/config.env`;
+   `/etc/nomad.d/secrets.env` is also consulted.
 
    **1Password** with a service account (create one in 1Password, scoped
    read-only to the vaults your jobs need):
 
    ```sh
-   install -d -m 0700 /etc/nomad-secret-onepassword
-   echo "ops_eyJ..." > /etc/nomad-secret-onepassword/token
-   cat > /etc/nomad-secret-onepassword/config.env <<'EOF'
-   OP_SERVICE_ACCOUNT_TOKEN_FILE=/etc/nomad-secret-onepassword/token
+   install -d -m 0700 /etc/nomad-secret
+   echo "ops_eyJ..." > /etc/nomad-secret/token
+   cat > /etc/nomad-secret/config.env <<'EOF'
+   OP_SERVICE_ACCOUNT_TOKEN_FILE=/etc/nomad-secret/token
    EOF
-   chmod 0600 /etc/nomad-secret-onepassword/config.env /etc/nomad-secret-onepassword/token
+   chmod 0600 /etc/nomad-secret/config.env /etc/nomad-secret/token
    ```
 
    Or with a self-hosted Connect server:
 
    ```sh
-   cat > /etc/nomad-secret-onepassword/config.env <<'EOF'
+   cat > /etc/nomad-secret/config.env <<'EOF'
    OP_CONNECT_HOST=http://127.0.0.1:8080
-   OP_CONNECT_TOKEN_FILE=/etc/nomad-secret-onepassword/token
+   OP_CONNECT_TOKEN_FILE=/etc/nomad-secret/token
    EOF
    ```
 
@@ -143,7 +133,7 @@ env {                     ├─ written to on-disk cache
    the host config so the SDK doesn't stall probing instance metadata:
 
    ```sh
-   cat > /etc/nomad-secret-onepassword/config.env <<'EOF'
+   cat > /etc/nomad-secret/config.env <<'EOF'
    AWS_REGION=ap-southeast-2
    # AWS_ENDPOINT_URL=http://127.0.0.1:4566   # optional: localstack / VPC endpoint
    # Optional static credentials (otherwise the SDK default chain is used):
@@ -201,7 +191,7 @@ keeps it readable):
 
 ```hcl
 secret "app" {
-  provider = "onepassword"
+  provider = "secrets"
   path     = <<-EOF
     # one line per secret: <name> = <reference>
     db_password = op://Production/database/password
@@ -347,8 +337,8 @@ content ~33%. The error names the reference and the limit.
 
 Settings come from (highest precedence first):
 
-1. `/etc/nomad-secret-onepassword/config.env`, or if absent
-   `/etc/nomad.d/onepassword.env` — the host config file,
+1. `/etc/nomad-secret/config.env`, or if absent
+   `/etc/nomad.d/secrets.env` — the host config file,
 2. the plugin's process environment — the Nomad agent's environment plus any
    `env {}` block in the job's `secret` block.
 
@@ -361,7 +351,7 @@ Settings come from (highest precedence first):
 | `OP_CONNECT_TOKEN_FILE` | — | File containing the Connect token (preferred) |
 | `OP_CACHE_TTL` | `5m` | Serve cached values this long without re-fetching; `0` disables |
 | `OP_CACHE_MAX_STALE` | `24h` | On Connect outage, serve values up to this old; `0` disables |
-| `OP_CACHE_DIR` | `/var/cache/nomad-secret-onepassword` | Cache location |
+| `OP_CACHE_DIR` | `/var/cache/nomad-secret` | Cache location |
 | `OP_REQUEST_TIMEOUT` | `30s` | Per-fetch Connect timeout (Nomad kills fetches at 60s) |
 | `SECRET_MAX_FILE_BYTES` | `1048576` | Max raw byte length of a file-like secret; larger is rejected. `0` disables |
 
@@ -434,7 +424,7 @@ reference, what failed, and which backend and config file were active, e.g.
 ```
 entry "db_password": resolving op://Production/database/password: no vault
 named "Production" is visible to this service account [backend: 1Password
-service account; config: /etc/nomad-secret-onepassword/config.env; try
+service account; config: /etc/nomad-secret/config.env; try
 `secrets check` on this node]
 ```
 
@@ -450,10 +440,10 @@ To dig deeper, run the diagnostic on the client node:
 $ secrets check
 secrets provider v0.4.0 — diagnostic
 
-OK   config loaded from: /etc/nomad-secret-onepassword/config.env
+OK   config loaded from: /etc/nomad-secret/config.env
 OK   backend: 1Password service account
      request timeout 30s, cache TTL 5m0s, max stale 24h0m0s
-OK   cache: /var/cache/nomad-secret-onepassword
+OK   cache: /var/cache/nomad-secret
 OK   connectivity: 2 vault(s) visible: Infrastructure, Production
 
 # dry-run any reference (or a full multi-entry path) — prints the

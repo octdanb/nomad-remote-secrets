@@ -11,7 +11,7 @@ plugin secret values are never rendered — the console may show the secret
 ```
 
 Hermetic — reuses `e2e/fakeconnect` as the 1Password backend, boots a Nomad
-dev agent with the `onepassword` plugin, deploys `job-ui.nomad.hcl` (a
+dev agent with the `secrets` plugin, deploys `job-ui.nomad.hcl` (a
 long-running service so the alloc stays visible in the UI), then runs the
 Playwright suite. Needs `nomad` (≥ 1.11) on PATH (or `NOMAD_BIN=...`), Go, jq,
 Node, and root/sudo.

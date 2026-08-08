@@ -51,8 +51,6 @@ echo "==> building and installing plugin"
 make build
 $SUDO install -d "$PLUGIN_DIR/secrets"
 $SUDO install -m 0755 bin/secrets "$PLUGIN_DIR/secrets/secrets"
-# Back-compat alias (same binary; this AWS job uses provider = "secrets").
-$SUDO ln -sf secrets "$PLUGIN_DIR/secrets/onepassword"
 
 echo "==> starting localstack (SSM + Secrets Manager)"
 # Pin to the v3 community image: SSM and Secrets Manager are free/community
@@ -82,8 +80,8 @@ aws_sm create-secret --name prod/sm/creds \
     --secret-string '{"username":"sm-user","password":"sm-json-pass"}'
 
 echo "==> configuring AWS backend (localstack + dummy creds)"
-$SUDO install -d -m 0700 /etc/nomad-secret-onepassword
-$SUDO tee /etc/nomad-secret-onepassword/config.env >/dev/null <<EOF
+$SUDO install -d -m 0700 /etc/nomad-secret
+$SUDO tee /etc/nomad-secret/config.env >/dev/null <<EOF
 AWS_REGION=us-east-1
 AWS_ENDPOINT_URL=$LOCALSTACK_ENDPOINT
 AWS_ACCESS_KEY_ID=test

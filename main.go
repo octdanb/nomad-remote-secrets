@@ -10,9 +10,7 @@
 //
 // Install the binary as <client.common_plugin_dir>/secrets/secrets on every
 // Nomad client node; the executable's file name is the provider name used in
-// job specifications. The binary dispatches on the operation argument, not on
-// its own filename, so installing it additionally as .../secrets/onepassword
-// keeps provider = "onepassword" jobs working unchanged.
+// job specifications.
 package main
 
 import (

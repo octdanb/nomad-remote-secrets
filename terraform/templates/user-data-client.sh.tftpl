@@ -7,12 +7,12 @@ exec > >(tee /var/log/user-data.log | logger -t user-data) 2>&1
 
 # ------------------------------------------------------------------ 1Password
 umask 077
-install -d -m 0700 /etc/nomad-secret-onepassword
+install -d -m 0700 /etc/nomad-secret
 aws ssm get-parameter --with-decryption --region "${aws_region}" \
   --name "${op_token_ssm_parameter}" \
-  --query Parameter.Value --output text > /etc/nomad-secret-onepassword/token
-cat > /etc/nomad-secret-onepassword/config.env <<'EOT'
-OP_SERVICE_ACCOUNT_TOKEN_FILE=/etc/nomad-secret-onepassword/token
+  --query Parameter.Value --output text > /etc/nomad-secret/token
+cat > /etc/nomad-secret/config.env <<'EOT'
+OP_SERVICE_ACCOUNT_TOKEN_FILE=/etc/nomad-secret/token
 EOT
 umask 022
 
@@ -106,7 +106,7 @@ EOT
 
 # Nomad-provider token self-fetch: the ACL playbook stores the token in
 # 1Password AFTER the cluster is up; this timer polls for it via the
-# onepassword plugin binary and hot-enables service discovery when it
+# secrets plugin binary and hot-enables service discovery when it
 # appears. Until then Traefik still serves the routes above.
 cat > /usr/local/bin/traefik-nomad-token <<'EOT'
 #!/usr/bin/env bash

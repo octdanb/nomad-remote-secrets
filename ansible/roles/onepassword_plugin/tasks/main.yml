@@ -1,11 +1,10 @@
 # Installs the multi-provider `secrets` Nomad secret provider plugin (the role
 # directory keeps its historical name for compatibility with existing
 # playbooks/terraform). The provider name is `secrets`; the reference scheme
-# (op://, aws-ssm:, aws-sm:) selects the backend. An `onepassword` alias is
-# also laid down so existing jobs using provider = "onepassword" keep working.
+# (op://, aws-ssm:, aws-sm:) selects the backend.
 #
 # Credentials are NOT laid down here:
-# /etc/nomad-secret-onepassword/{config.env,token} comes from first-boot user
+# /etc/nomad-secret/{config.env,token} comes from first-boot user
 # data (AMI) or your host-specific provisioning (bare metal), so the same role
 # output is safe to bake into an image.
 - name: Install plugin binary
@@ -14,15 +13,9 @@
     dest: "{{ nomad_plugin_dir }}/secrets/secrets"
     mode: "0755"
 
-- name: Back-compat provider alias (onepassword -> secrets)
-  ansible.builtin.file:
-    src: secrets
-    dest: "{{ nomad_plugin_dir }}/secrets/onepassword"
-    state: link
-
 - name: Plugin config directory (root-only)
   ansible.builtin.file:
-    path: /etc/nomad-secret-onepassword
+    path: /etc/nomad-secret
     state: directory
     mode: "0700"
 
