@@ -9,7 +9,8 @@ import (
 	"strings"
 
 	"github.com/octdanb/nomad-secret-plugin/internal/cache"
-	"github.com/octdanb/nomad-secret-plugin/internal/opref"
+	"github.com/octdanb/nomad-secret-plugin/internal/provider"
+	"github.com/octdanb/nomad-secret-plugin/internal/provider/onepassword"
 )
 
 // Check is the operator diagnostic behind `onepassword check [reference]`.
@@ -41,9 +42,17 @@ func Check(w io.Writer, path string) int {
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
-	src := newSource(cfg)
 
-	vaults, err := src.ListVaults(ctx)
+	// The connectivity summary is backend-specific: the op:// provider can
+	// enumerate the visible vaults, which is the most useful scope check.
+	op := onepassword.New(onepassword.Config{
+		ServiceAccountToken: cfg.ServiceAccountToken,
+		ConnectHost:         cfg.ConnectHost,
+		Token:               cfg.Token,
+		Timeout:             cfg.Timeout,
+		Version:             Version,
+	})
+	vaults, err := op.ListVaults(ctx)
 	if err != nil {
 		fmt.Fprintf(w, "FAIL connectivity: %v\n", err)
 		fmt.Fprintf(w, "     hint: %s\n", hintFor(err))
@@ -64,28 +73,35 @@ func Check(w io.Writer, path string) int {
 	}
 
 	fmt.Fprintf(w, "\nResolving %q (values are never printed):\n", path)
-	entries, err := opref.ParseAll(path)
+	entries, err := provider.SplitEntries(path)
 	if err != nil {
 		fmt.Fprintf(w, "FAIL parse: %v\n", err)
 		return 1
 	}
 
+	reg := newRegistry(cfg)
 	failed := false
 	for _, entry := range entries {
-		label := entry.Ref.String()
+		label := entry.Ref
 		if entry.Name != "" {
 			label = entry.Name + " = " + label
 		}
+		p, err := reg.Route(entry.Ref)
+		if err != nil {
+			failed = true
+			fmt.Fprintf(w, "FAIL %s\n     %v\n", label, err)
+			continue
+		}
 		// Resolve live, bypassing the cache, so the check reflects the
 		// backend's current state.
-		values, err := resolve(ctx, src, entry.Ref)
+		result, err := p.Resolve(ctx, entry.Ref)
 		if err != nil {
 			failed = true
 			fmt.Fprintf(w, "FAIL %s\n     %v\n     hint: %s\n", label, err, hintFor(err))
 			continue
 		}
-		keys := make([]string, 0, len(values))
-		for k := range values {
+		keys := make([]string, 0, len(result.Values))
+		for k := range result.Values {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)

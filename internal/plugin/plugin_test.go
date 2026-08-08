@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/octdanb/nomad-secret-plugin/internal/connect"
+	"github.com/octdanb/nomad-secret-plugin/internal/provider/onepassword/connect"
 )
 
 const (

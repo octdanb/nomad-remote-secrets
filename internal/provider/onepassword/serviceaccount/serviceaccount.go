@@ -12,7 +12,7 @@ import (
 
 	onepassword "github.com/1password/onepassword-sdk-go"
 
-	"github.com/octdanb/nomad-secret-plugin/internal/opitem"
+	"github.com/octdanb/nomad-secret-plugin/internal/provider/onepassword/opitem"
 )
 
 // Source resolves vaults and items with a service account token.

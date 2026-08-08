@@ -113,18 +113,6 @@ func TestServiceAccountTokenFile(t *testing.T) {
 	}
 }
 
-func TestCacheScopeSeparatesBackends(t *testing.T) {
-	connect := Config{ConnectHost: "http://c:8080", Token: "tok"}
-	sa := Config{ConnectHost: "http://c:8080", Token: "tok", ServiceAccountToken: "ops_x"}
-	if connect.cacheScope() == sa.cacheScope() {
-		t.Error("connect and service-account configs must not share cache entries")
-	}
-	sa2 := Config{ServiceAccountToken: "ops_y"}
-	if sa.cacheScope() == sa2.cacheScope() {
-		t.Error("different service account tokens must not share cache entries")
-	}
-}
-
 func TestMissingHostAndToken(t *testing.T) {
 	if _, err := LoadConfig(nil, envMap(nil)); err == nil || !strings.Contains(err.Error(), "OP_CONNECT_HOST") {
 		t.Errorf("err = %v, want missing-host error", err)

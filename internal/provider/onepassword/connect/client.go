@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/octdanb/nomad-secret-plugin/internal/opitem"
+	"github.com/octdanb/nomad-secret-plugin/internal/provider/onepassword/opitem"
 )
 
 // idPattern matches 1Password object IDs (26 lowercase base32 characters).

@@ -2,8 +2,6 @@ package plugin
 
 import (
 	"bufio"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -16,6 +14,33 @@ import (
 // DefaultCacheDir is where fetched secrets are cached between plugin
 // invocations unless OP_CACHE_DIR overrides it.
 const DefaultCacheDir = "/var/cache/nomad-secret-onepassword"
+
+// Config holds everything a fetch needs. The 1Password backend fields are
+// used to build the op:// provider; a service account token (direct to
+// 1password.com) wins over a Connect server when both are configured.
+type Config struct {
+	ServiceAccountToken string        // OP_SERVICE_ACCOUNT_TOKEN / OP_SERVICE_ACCOUNT_TOKEN_FILE
+	ConnectHost         string        // OP_CONNECT_HOST
+	Token               string        // OP_CONNECT_TOKEN / OP_CONNECT_TOKEN_FILE
+	Timeout             time.Duration // OP_REQUEST_TIMEOUT (default 30s)
+	CacheDir            string        // OP_CACHE_DIR
+	CacheTTL            time.Duration // OP_CACHE_TTL (default 5m, 0 disables)
+	MaxStale            time.Duration // OP_CACHE_MAX_STALE (default 24h, 0 disables fallback)
+
+	// Source records where the settings came from — the loaded config
+	// file path, or "agent environment" — so error messages can point
+	// operators at the right place.
+	Source string
+}
+
+// Describe names the active backend for error messages and diagnostics.
+// Tokens are never included.
+func (c Config) Describe() string {
+	if c.ServiceAccountToken != "" {
+		return "1Password service account"
+	}
+	return "1Password Connect at " + c.ConnectHost
+}
 
 // LoadConfig builds the fetch configuration from an optional host config
 // file and the process environment. The first path in paths that exists is
@@ -95,18 +120,6 @@ func LoadConfig(paths []string, getenv func(string) string) (Config, error) {
 		cfg.CacheDir = ""
 	}
 	return cfg, nil
-}
-
-// cacheScope returns the backend-identifying prefix for cache keys, so
-// entries are never shared across servers, accounts, or tokens with
-// different vault access.
-func (c Config) cacheScope() string {
-	host, token := c.ConnectHost, c.Token
-	if c.ServiceAccountToken != "" {
-		host, token = "service-account", c.ServiceAccountToken
-	}
-	sum := sha256.Sum256([]byte(token))
-	return host + "|" + hex.EncodeToString(sum[:8])
 }
 
 // tokenSetting reads a token from <key> or, failing that, from the file
