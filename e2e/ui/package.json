@@ -1,0 +1,13 @@
+{
+  "name": "nomad-secret-plugin-ui-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Playwright tests asserting the Nomad web UI never renders resolved plugin secrets",
+  "scripts": {
+    "test": "playwright test",
+    "install-browsers": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0"
+  }
+}
