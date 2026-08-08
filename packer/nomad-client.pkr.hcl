@@ -1,7 +1,6 @@
 // Packer template for a versioned Nomad client AMI (Ubuntu 24.04) with
-// Docker, the multi-provider `secrets` secret provider plugin (with an
-// onepassword back-compat alias), and an optional Traefik install baked in
-// but disabled.
+// Docker, the multi-provider `secrets` secret provider plugin, and an
+// optional Traefik install baked in but disabled.
 //
 // The image is credential-free by design: 1Password tokens, node pool,
 // datacenter, server join addresses, and Traefik enablement are all injected

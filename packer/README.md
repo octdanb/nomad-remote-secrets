@@ -7,7 +7,7 @@ Builds a versioned, org-shareable AMI in **ap-southeast-2** on **Ubuntu
 |---|---|
 | Nomad (pinned, ≥ 1.11) | installed, **disabled** until configured |
 | Docker Engine | installed, enabled |
-| multi-provider `secrets` plugin (+ `onepassword` alias) | installed at `/opt/nomad/plugins/secrets/secrets` |
+| multi-provider `secrets` plugin | installed at `/opt/nomad/plugins/secrets/secrets` |
 | Traefik (pinned) | installed, **disabled** — opt-in per instance |
 
 The image contains **no credentials and no environment-specific settings**.
@@ -219,7 +219,7 @@ RPC is internal); tokens are for the HTTP API — humans, CI, and Traefik.
 
 User data writes, at first boot:
 
-- `/etc/nomad-secret-onepassword/token` + `config.env` — the vault-scoped
+- `/etc/nomad-secret/token` + `config.env` — the vault-scoped
   service account token (or `OP_CONNECT_HOST`/token for a Connect backend).
   The host config file also locks backend settings against override from
   job-submitted `env {}` blocks.

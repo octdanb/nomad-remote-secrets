@@ -30,13 +30,13 @@ set -euo pipefail
 exec > >(tee /var/log/user-data.log | logger -t user-data) 2>&1
 
 # ------------------------------------------------------------------ 1Password
-install -d -m 0700 /etc/nomad-secret-onepassword
+install -d -m 0700 /etc/nomad-secret
 umask 077
-cat > /etc/nomad-secret-onepassword/token <<'EOT'
+cat > /etc/nomad-secret/token <<'EOT'
 ${op_service_account_token}
 EOT
-cat > /etc/nomad-secret-onepassword/config.env <<'EOT'
-OP_SERVICE_ACCOUNT_TOKEN_FILE=/etc/nomad-secret-onepassword/token
+cat > /etc/nomad-secret/config.env <<'EOT'
+OP_SERVICE_ACCOUNT_TOKEN_FILE=/etc/nomad-secret/token
 OP_CACHE_TTL=${op_cache_ttl}
 EOT
 umask 022

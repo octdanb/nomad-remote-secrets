@@ -32,8 +32,8 @@ const Version = "0.4.0"
 // redirect the agent-level Connect token to a host the operator didn't
 // choose.
 var ConfigPaths = []string{
-	"/etc/nomad-secret-onepassword/config.env",
-	"/etc/nomad.d/onepassword.env",
+	"/etc/nomad-secret/config.env",
+	"/etc/nomad.d/secrets.env",
 }
 
 // newRegistry builds the provider registry from the loaded configuration.

@@ -22,12 +22,12 @@ job "e2e-secrets" {
       driver = "docker"
 
       secret "db" {
-        provider = "onepassword"
+        provider = "secrets"
         path     = var.secret_path
       }
 
       secret "app" {
-        provider = "onepassword"
+        provider = "secrets"
         path     = <<-EOF
           pw      = op://Testing/database/password
           rep     = op://Testing/database/replica/password

@@ -23,12 +23,12 @@ job "e2e-secrets" {
       driver = "raw_exec"
 
       secret "db" {
-        provider = "onepassword"
+        provider = "secrets"
         path     = var.secret_path
       }
 
       secret "app" {
-        provider = "onepassword"
+        provider = "secrets"
         path     = <<-EOF
           pw      = op://Testing/database/password
           rep     = op://Testing/database/replica/password
@@ -40,7 +40,7 @@ job "e2e-secrets" {
       # content. The plugin never writes files; the job materializes it into
       # tmpfs secrets/ via a template block.
       secret "doc" {
-        provider = "onepassword"
+        provider = "secrets"
         path     = "welcome = op://Testing/welcome"
       }
 

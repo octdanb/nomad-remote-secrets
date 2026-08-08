@@ -7,9 +7,7 @@ name: Release
 #   git tag v0.5.0 && git push origin v0.5.0
 #
 # Produces secrets_linux_amd64, secrets_linux_arm64, and a SHA256SUMS file
-# that Ansible can pin against with `checksum:`. For back-compat with any
-# existing Ansible pin, identical onepassword_linux_{amd64,arm64} copies are
-# also published (same bytes; the binary dispatches on argv, not filename).
+# that Ansible can pin against with `checksum:`.
 
 on:
   push:
@@ -34,15 +32,9 @@ jobs:
       - name: Build linux binaries
         run: make release
 
-      - name: Back-compat onepassword copies
-        working-directory: bin
-        run: |
-          cp secrets_linux_amd64 onepassword_linux_amd64
-          cp secrets_linux_arm64 onepassword_linux_arm64
-
       - name: Checksums
         working-directory: bin
-        run: sha256sum secrets_linux_amd64 secrets_linux_arm64 onepassword_linux_amd64 onepassword_linux_arm64 > SHA256SUMS
+        run: sha256sum secrets_linux_amd64 secrets_linux_arm64 > SHA256SUMS
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -50,8 +42,6 @@ jobs:
           files: |
             bin/secrets_linux_amd64
             bin/secrets_linux_arm64
-            bin/onepassword_linux_amd64
-            bin/onepassword_linux_arm64
             bin/SHA256SUMS
           generate_release_notes: true
           fail_on_unmatched_files: true

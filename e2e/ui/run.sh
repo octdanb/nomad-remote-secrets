@@ -34,8 +34,6 @@ echo "==> building and installing plugin"
 make build
 $SUDO install -d "$PLUGIN_DIR/secrets"
 $SUDO install -m 0755 bin/secrets "$PLUGIN_DIR/secrets/secrets"
-# Back-compat alias: the UI job uses provider = "onepassword".
-$SUDO ln -sf secrets "$PLUGIN_DIR/secrets/onepassword"
 
 echo "==> starting fake 1Password Connect"
 go run ./e2e/fakeconnect >/tmp/nomad-ui-connect.log 2>&1 &
@@ -45,8 +43,8 @@ for _ in $(seq 1 30); do
   sleep 0.5
 done
 
-$SUDO install -d -m 0700 /etc/nomad-secret-onepassword
-$SUDO tee /etc/nomad-secret-onepassword/config.env >/dev/null <<'EOF'
+$SUDO install -d -m 0700 /etc/nomad-secret
+$SUDO tee /etc/nomad-secret/config.env >/dev/null <<'EOF'
 OP_CONNECT_HOST=http://127.0.0.1:8999
 OP_CONNECT_TOKEN=e2e-test-token
 OP_CACHE_TTL=0
