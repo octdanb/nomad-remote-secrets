@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -380,5 +381,27 @@ func TestOTPNeverCached(t *testing.T) {
 	resp := runFetch(t, "op://Prod/database/one-time password?attribute=otp")
 	if resp.Error == "" {
 		t.Fatal("OTP fetch must not be served from cache")
+	}
+}
+
+func TestSanitizeAWSEnvRemovesOnlyAWSVars(t *testing.T) {
+	// A job's secret env{} block is merged into the plugin's environment;
+	// sanitizeAWSEnv must strip every AWS_* var so the SDK can't be steered,
+	// while leaving unrelated variables intact.
+	t.Setenv("AWS_ENDPOINT_URL", "https://attacker.example")
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAEVIL")
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", "/tmp/evil")
+	t.Setenv("AWS_CONTAINER_CREDENTIALS_FULL_URI", "http://attacker.example")
+	t.Setenv("PATH_KEEPME", "keep")
+
+	sanitizeAWSEnv()
+
+	for _, k := range []string{"AWS_ENDPOINT_URL", "AWS_ACCESS_KEY_ID", "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONTAINER_CREDENTIALS_FULL_URI"} {
+		if v, ok := os.LookupEnv(k); ok {
+			t.Errorf("%s still set to %q after sanitize", k, v)
+		}
+	}
+	if os.Getenv("PATH_KEEPME") != "keep" {
+		t.Error("sanitizeAWSEnv removed a non-AWS variable")
 	}
 }
