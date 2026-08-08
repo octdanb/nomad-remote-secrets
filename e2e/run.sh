@@ -64,6 +64,7 @@ EOF
     "REP=replica-pass-e2e"
     "USER=app-user"
     "HOST=db.internal.test"
+    "DOC=e2e-document-content"
   )
 else
   : "${OP_SERVICE_ACCOUNT_TOKEN:?real mode needs OP_SERVICE_ACCOUNT_TOKEN}"

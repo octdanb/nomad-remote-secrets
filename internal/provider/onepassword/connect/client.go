@@ -56,11 +56,22 @@ type Section struct {
 type Field struct {
 	ID      string   `json:"id"`
 	Label   string   `json:"label"`
-	Type    string   `json:"type"`    // e.g. STRING, CONCEALED, OTP
+	Type    string   `json:"type"`    // e.g. STRING, CONCEALED, OTP, FILE
 	Purpose string   `json:"purpose"` // e.g. USERNAME, PASSWORD, NOTES
 	Value   string   `json:"value"`
 	TOTP    string   `json:"totp"` // current code, set on OTP fields
 	Section *Section `json:"section"`
+}
+
+// File is a subset of the Connect API item file object. FILE-type fields
+// reference one of these by ID; a Document item carries one in its files list.
+type File struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Size        int      `json:"size"`
+	ContentPath string   `json:"content_path"`
+	FieldID     string   `json:"field_id"`
+	Section     *Section `json:"section"`
 }
 
 // Item is a subset of the Connect API item object.
@@ -70,6 +81,7 @@ type Item struct {
 	Category string    `json:"category"`
 	Fields   []Field   `json:"fields"`
 	Sections []Section `json:"sections"`
+	Files    []File    `json:"files"`
 }
 
 // apiError is the error body Connect returns on non-2xx responses.
@@ -158,6 +170,25 @@ func toOpItem(it *Item) *opitem.Item {
 	for _, s := range it.Sections {
 		out.Sections = append(out.Sections, opitem.Section{ID: s.ID, Label: s.Label})
 	}
+	// Index files by the field they back so FILE-type fields can carry a
+	// FileID for lazy content fetching.
+	filesByField := map[string]File{}
+	for _, fl := range it.Files {
+		if fl.FieldID != "" {
+			filesByField[fl.FieldID] = fl
+		}
+		of := opitem.File{
+			ID:          fl.ID,
+			Name:        fl.Name,
+			Size:        fl.Size,
+			FieldID:     fl.FieldID,
+			ContentPath: fl.ContentPath,
+		}
+		if fl.Section != nil {
+			of.SectionID = fl.Section.ID
+		}
+		out.Files = append(out.Files, of)
+	}
 	for _, f := range it.Fields {
 		nf := opitem.Field{
 			ID:      f.ID,
@@ -170,9 +201,53 @@ func toOpItem(it *Item) *opitem.Item {
 		if f.Section != nil {
 			nf.SectionID = f.Section.ID
 		}
+		if fl, ok := filesByField[f.ID]; ok {
+			nf.FileID = fl.ID
+		}
 		out.Fields = append(out.Fields, nf)
 	}
 	return out
+}
+
+// GetFileContent fetches the raw bytes of a file attached to an item. The
+// Connect API serves file content at
+// /v1/vaults/{v}/items/{i}/files/{f}/content.
+func (c *Client) GetFileContent(ctx context.Context, vaultID, itemID, fileID string) ([]byte, error) {
+	path := "/v1/vaults/" + vaultID + "/items/" + itemID + "/files/" + fileID + "/content"
+	data, err := c.getRaw(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("reading file content: %w", err)
+	}
+	return data, nil
+}
+
+// getRaw performs an authenticated GET and returns the raw response body,
+// used for binary file content that must not be JSON-decoded.
+func (c *Client) getRaw(ctx context.Context, path string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.host+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to 1Password Connect at %s: %w", c.host, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var ae apiError
+		if json.Unmarshal(body, &ae) == nil && ae.Message != "" {
+			return nil, fmt.Errorf("1Password Connect: %s (HTTP %d)", ae.Message, resp.StatusCode)
+		}
+		return nil, fmt.Errorf("1Password Connect: HTTP %d from %s", resp.StatusCode, path)
+	}
+	return body, nil
 }
 
 func (c *Client) get(ctx context.Context, path string, query url.Values, out any) error {

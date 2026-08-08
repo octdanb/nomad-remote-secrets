@@ -29,10 +29,11 @@ const Scheme = "aws-sm"
 // plugin only pins the region/profile/endpoint. There is no Decrypt setting —
 // Secrets Manager decrypts server-side.
 type Config struct {
-	Region      string        // AWS_REGION
-	Profile     string        // AWS_PROFILE
-	EndpointURL string        // AWS_ENDPOINT_URL (e.g. localstack for tests)
-	Timeout     time.Duration // request timeout
+	Region       string        // AWS_REGION
+	Profile      string        // AWS_PROFILE
+	EndpointURL  string        // AWS_ENDPOINT_URL (e.g. localstack for tests)
+	Timeout      time.Duration // request timeout
+	MaxFileBytes int64         // SECRET_MAX_FILE_BYTES (0 disables), applied to binary secrets
 }
 
 // api is the slice of the Secrets Manager client this provider uses. Narrowing
@@ -76,6 +77,7 @@ type options struct {
 	stage    string // VersionStage label (e.g. AWSPREVIOUS)
 	raw      bool   // do not auto-expand JSON; expose only "value"
 	binary   bool   // force treating the secret as binary
+	base64   bool   // ?encoding=base64: file output only, no utf8 "value"
 }
 
 // parse strips the aws-sm: scheme and reads the option query. The remainder
@@ -102,6 +104,13 @@ func (p *Provider) parse(ref string) (options, error) {
 		}
 		if v := q.Get("binary"); v != "" {
 			opts.binary = v == "true"
+		}
+		switch enc := q.Get("encoding"); enc {
+		case "":
+		case "base64":
+			opts.base64 = true
+		default:
+			return options{}, fmt.Errorf("invalid options in %q: unsupported encoding %q", ref, enc)
 		}
 	}
 	if opts.secretID == "" {
@@ -154,12 +163,24 @@ func (p *Provider) Resolve(ctx context.Context, ref string) (provider.Result, er
 		return provider.Result{Values: values, Object: obj}, nil
 	}
 
-	// A binary secret: base64-encode the bytes. "value" mirrors the encoding
-	// so ${secret.block.value} is always safe. (The richer file-secret pattern
-	// is Phase 4.)
+	// A binary secret is a file-like reference: value_base64 is the canonical
+	// key. For back-compat "value" also carries the base64 string (Secrets
+	// Manager binary has always base64-encoded here), unless ?encoding=base64
+	// is set. The size guardrail is applied to the decoded byte length.
 	if out.SecretBinary != nil {
+		if p.cfg.MaxFileBytes > 0 && int64(len(out.SecretBinary)) > p.cfg.MaxFileBytes {
+			return provider.Result{}, fmt.Errorf("resolving %s: binary secret is %d bytes, exceeding SECRET_MAX_FILE_BYTES=%d", ref, len(out.SecretBinary), p.cfg.MaxFileBytes)
+		}
 		enc := base64.StdEncoding.EncodeToString(out.SecretBinary)
-		return provider.Result{Values: map[string]string{"value": enc, "value_base64": enc}, Object: false}, nil
+		res := provider.FileResult("", out.SecretBinary)
+		// value_base64 is set by FileResult; keep value = base64 for back-compat
+		// (not the decoded text) unless the caller forces base64-only output.
+		if opts.base64 {
+			delete(res.Values, "value")
+		} else {
+			res.Values["value"] = enc
+		}
+		return res, nil
 	}
 
 	return provider.Result{}, fmt.Errorf("resolving %s: secret has neither SecretString nor SecretBinary", ref)

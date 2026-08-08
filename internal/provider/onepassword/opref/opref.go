@@ -18,10 +18,15 @@ type Ref struct {
 	Section string // section label or ID (optional, only with Field)
 	Field   string // field label or ID (optional)
 
-	// Attribute is the optional ?attribute= query parameter. The only
-	// value 1Password defines today is "otp", which asks for the current
-	// TOTP code of an OTP field instead of its stored value.
+	// Attribute is the optional ?attribute= query parameter. "otp" asks for
+	// the current TOTP code of an OTP field instead of its stored value;
+	// "file" forces fetching the file content of a document item or file
+	// field.
 	Attribute string
+
+	// Encoding is the optional ?encoding= query parameter. "base64" forces
+	// base64-only output for a file reference, skipping the utf8 "value" key.
+	Encoding string
 }
 
 // WholeItem reports whether the reference addresses an entire item rather
@@ -39,11 +44,22 @@ func (r Ref) String() string {
 		parts = append(parts, r.Field)
 	}
 	s := "op://" + strings.Join(parts, "/")
+	q := url.Values{}
 	if r.Attribute != "" {
-		s += "?attribute=" + r.Attribute
+		q.Set("attribute", r.Attribute)
+	}
+	if r.Encoding != "" {
+		q.Set("encoding", r.Encoding)
+	}
+	if len(q) > 0 {
+		s += "?" + q.Encode()
 	}
 	return s
 }
+
+// IsFile reports whether the reference forces file-content semantics via
+// ?attribute=file.
+func (r Ref) IsFile() bool { return r.Attribute == "file" }
 
 // Parse parses a secret reference. The leading "op://" scheme is optional so
 // that plain "vault/item/field" paths also work in a Nomad secret block.
@@ -60,9 +76,17 @@ func Parse(raw string) (Ref, error) {
 		return Ref{}, fmt.Errorf("unsupported scheme %q: secret references must use op://", scheme)
 	}
 
-	var attribute string
-	if s, attribute = splitQuery(s); attribute != "" && attribute != "otp" {
-		return Ref{}, fmt.Errorf("unsupported attribute %q: only \"otp\" is supported", attribute)
+	var attribute, encoding string
+	s, attribute, encoding = splitQuery(s)
+	switch attribute {
+	case "", "otp", "file":
+	default:
+		return Ref{}, fmt.Errorf("unsupported attribute %q: only \"otp\" and \"file\" are supported", attribute)
+	}
+	switch encoding {
+	case "", "base64":
+	default:
+		return Ref{}, fmt.Errorf("unsupported encoding %q: only \"base64\" is supported", encoding)
 	}
 
 	segs := strings.Split(s, "/")
@@ -81,7 +105,7 @@ func Parse(raw string) (Ref, error) {
 		segs[i] = seg
 	}
 
-	ref := Ref{Attribute: attribute}
+	ref := Ref{Attribute: attribute, Encoding: encoding}
 	switch len(segs) {
 	case 2:
 		ref.Vault, ref.Item = segs[0], segs[1]
@@ -93,21 +117,24 @@ func Parse(raw string) (Ref, error) {
 		return Ref{}, fmt.Errorf("invalid secret reference %q: want op://<vault>/<item>[/<section>]/<field>", raw)
 	}
 
-	if ref.Attribute != "" && ref.WholeItem() {
+	// ?attribute=otp needs a field segment; ?attribute=file is valid on a
+	// whole item too (a document item resolves to its file content).
+	if ref.Attribute == "otp" && ref.WholeItem() {
 		return Ref{}, fmt.Errorf("invalid secret reference %q: ?attribute=otp requires a field segment", raw)
 	}
 	return ref, nil
 }
 
-// splitQuery splits "path?attribute=x" into path and attribute value.
-func splitQuery(s string) (path, attribute string) {
+// splitQuery splits "path?attribute=x&encoding=y" into the path and the
+// attribute/encoding query values.
+func splitQuery(s string) (path, attribute, encoding string) {
 	path, query, found := strings.Cut(s, "?")
 	if !found {
-		return path, ""
+		return path, "", ""
 	}
 	vals, err := url.ParseQuery(query)
 	if err != nil {
-		return path, query // let Parse reject it as unsupported
+		return path, query, "" // let Parse reject it as unsupported
 	}
-	return path, vals.Get("attribute")
+	return path, vals.Get("attribute"), vals.Get("encoding")
 }

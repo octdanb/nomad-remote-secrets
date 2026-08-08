@@ -111,6 +111,28 @@ func TestResolveBinaryForced(t *testing.T) {
 	}
 }
 
+func TestResolveBinaryEncodingBase64(t *testing.T) {
+	raw := []byte{0x00, 0x01, 0x02, 0xff}
+	p := testProvider(&fakeAPI{bin: raw})
+	res, err := p.Resolve(context.Background(), "aws-sm:certs/key?encoding=base64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := res.Values["value"]; ok {
+		t.Error("encoding=base64 must drop value")
+	}
+	if res.Values["value_base64"] != base64.StdEncoding.EncodeToString(raw) {
+		t.Errorf("value_base64 = %q", res.Values["value_base64"])
+	}
+}
+
+func TestResolveBinarySizeLimit(t *testing.T) {
+	p := newWithAPI(Config{Region: "us-east-1", MaxFileBytes: 3}, &fakeAPI{bin: []byte("too-big")})
+	if _, err := p.Resolve(context.Background(), "aws-sm:certs/key"); err == nil {
+		t.Fatal("expected size-limit error")
+	}
+}
+
 func TestResolveVersionStage(t *testing.T) {
 	f := &fakeAPI{str: aws.String("v")}
 	p := testProvider(f)

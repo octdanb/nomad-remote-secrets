@@ -17,8 +17,14 @@ import (
 const (
 	vaultID = "e2evaultid00000000000000ab"
 	itemID  = "e2eitemid000000000000000ab"
+	docID   = "e2edocitem00000000000000ab"
+	fileID  = "e2efileid000000000000000ab"
 	token   = "e2e-test-token"
 )
+
+// docContent is the body of the "welcome" document item; the e2e job
+// materializes it into secrets/ via a template and asserts on it.
+const docContent = "e2e-document-content\n"
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8999", "listen address")
@@ -34,6 +40,17 @@ func main() {
 			{ID: "f2", Label: "password", Purpose: "PASSWORD", Value: "hunter2-e2e"},
 			{ID: "f3", Label: "host name", Value: "db.internal.test"},
 			{ID: "f4", Label: "password", Value: "replica-pass-e2e", Section: &connect.Section{ID: "s1"}},
+		},
+	}
+
+	// A Document item whose content is fetched as a file-like secret.
+	doc := connect.Item{
+		ID:       docID,
+		Title:    "welcome",
+		Category: "DOCUMENT",
+		Files: []connect.File{
+			{ID: fileID, Name: "welcome.txt", Size: len(docContent),
+				ContentPath: "/v1/vaults/" + vaultID + "/items/" + docID + "/files/" + fileID + "/content"},
 		},
 	}
 
@@ -61,15 +78,26 @@ func main() {
 	}))
 
 	mux.HandleFunc("GET /v1/vaults/"+vaultID+"/items", authed(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("filter") == `title eq "database"` {
+		switch r.URL.Query().Get("filter") {
+		case `title eq "database"`:
 			json.NewEncoder(w).Encode([]connect.Item{{ID: itemID, Title: "database"}})
-			return
+		case `title eq "welcome"`:
+			json.NewEncoder(w).Encode([]connect.Item{{ID: docID, Title: "welcome"}})
+		default:
+			json.NewEncoder(w).Encode([]connect.Item{})
 		}
-		json.NewEncoder(w).Encode([]connect.Item{})
 	}))
 
 	mux.HandleFunc("GET /v1/vaults/"+vaultID+"/items/"+itemID, authed(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(item)
+	}))
+
+	mux.HandleFunc("GET /v1/vaults/"+vaultID+"/items/"+docID, authed(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(doc)
+	}))
+
+	mux.HandleFunc("GET /v1/vaults/"+vaultID+"/items/"+docID+"/files/"+fileID+"/content", authed(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(docContent))
 	}))
 
 	log.Printf("fake 1Password Connect listening on %s (token: %s)", *addr, token)

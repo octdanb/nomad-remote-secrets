@@ -25,6 +25,19 @@ type Field struct {
 	Value     string
 	TOTP      string // current code, set on OTP fields when available
 	SectionID string // empty for top-level fields
+	FileID    string // set for FILE-type fields: the attached file's ID
+}
+
+// File is a file attached to an item — either a file field's attachment or,
+// for a Document item, the item's document. Byte content is fetched lazily
+// via the Source, never eagerly loaded with the item.
+type File struct {
+	ID          string
+	Name        string
+	Size        int
+	SectionID   string // empty for a document / top-level attachment
+	FieldID     string // set when the file backs a FILE-type field
+	ContentPath string // Connect content URL, when the backend provides one
 }
 
 // Item is a 1Password item with its resolved field values.
@@ -34,4 +47,5 @@ type Item struct {
 	Category string
 	Fields   []Field
 	Sections []Section
+	Files    []File // file attachments and, for Document items, the document
 }

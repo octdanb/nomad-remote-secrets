@@ -191,6 +191,73 @@ See [examples/smspit.nomad.hcl](examples/smspit.nomad.hcl) for a complete job.
 `secret` blocks can sit at the job, group, or task level; task level keeps a
 secret scoped to the one task that needs it.
 
+## File-like secrets
+
+Some secrets are files rather than scalar strings: a 1Password **document**, a
+**file-field attachment**, or an AWS Secrets Manager **binary** secret. The
+plugin never writes files itself (it's a short-lived per-fetch process, and
+side-effecting the filesystem would break Nomad's rendering and redaction).
+Instead it returns the content as ordinary interpolation keys that the job
+materializes into tmpfs `secrets/` with a `template` block.
+
+A file reference returns:
+
+| Key | Meaning |
+|---|---|
+| `value` | content as text — only when it is valid UTF-8 |
+| `value_base64` | base64 of the raw bytes — always present, safe for binary |
+| `filename` | original filename metadata, when the backend knows it |
+
+Named file entries are prefixed like whole items, so a `cert` entry exposes
+`cert_value`, `cert_value_base64`, and `cert_filename`.
+
+**Text file** (UTF-8, e.g. a PEM bundle):
+
+```hcl
+secret "cert" {
+  provider = "secrets"
+  path     = "bundle = op://Prod/tls-bundle" # a Document item
+}
+
+template {
+  data        = "${secret.cert.bundle_value}"
+  destination = "secrets/bundle.pem"
+  perms       = "0400"
+}
+```
+
+**Binary file** (e.g. a PKCS#12 keystore) — decode the base64:
+
+```hcl
+secret "ks" {
+  provider = "secrets"
+  path     = "keystore = aws-sm:prod/tls/keystore" # a SecretBinary secret
+}
+
+template {
+  data        = "{{ \"${secret.ks.keystore_value_base64}\" | base64Decode }}"
+  destination = "secrets/keystore.p12"
+  perms       = "0400"
+}
+```
+
+Reference syntax per backend:
+
+- **1Password** — a Document item (`op://Vault/MyDocument`) resolves to its
+  content automatically. A FILE-type field (`op://Vault/Item/attachment`)
+  resolves to that attachment. Force file semantics on any item or field with
+  `?attribute=file`. `?encoding=base64` drops the utf8 `value`, leaving only
+  `value_base64`. `?attribute=otp` is unchanged.
+- **AWS Secrets Manager** — a `SecretBinary` secret is detected automatically
+  and base64-encoded; `?binary` forces binary handling and `?encoding=base64`
+  drops the back-compat `value` (which otherwise carries the base64 string).
+- **AWS Parameter Store** — strings only; no file semantics.
+
+**Size guardrail** — `SECRET_MAX_FILE_BYTES` (default `1048576` = 1 MiB, `0`
+disables) caps a file's raw byte length. Larger content is **rejected**, not
+truncated: env-var interpolation has an OS size ceiling and base64 inflates
+content ~33%. The error names the reference and the limit.
+
 ## Configuration
 
 Settings come from (highest precedence first):
@@ -211,6 +278,7 @@ Settings come from (highest precedence first):
 | `OP_CACHE_MAX_STALE` | `24h` | On Connect outage, serve values up to this old; `0` disables |
 | `OP_CACHE_DIR` | `/var/cache/nomad-secret-onepassword` | Cache location |
 | `OP_REQUEST_TIMEOUT` | `30s` | Per-fetch Connect timeout (Nomad kills fetches at 60s) |
+| `SECRET_MAX_FILE_BYTES` | `1048576` | Max raw byte length of a file-like secret; larger is rejected. `0` disables |
 
 Durations accept Go syntax (`5m`, `90s`) or bare seconds (`300`).
 

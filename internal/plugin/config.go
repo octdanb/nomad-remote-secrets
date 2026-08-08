@@ -27,6 +27,12 @@ type Config struct {
 	CacheTTL            time.Duration // OP_CACHE_TTL (default 5m, 0 disables)
 	MaxStale            time.Duration // OP_CACHE_MAX_STALE (default 24h, 0 disables fallback)
 
+	// MaxFileBytes caps the raw byte length of a file-like secret (1Password
+	// document/file field, AWS binary secret). Larger content is rejected
+	// rather than truncated: env-var interpolation has an OS size ceiling and
+	// base64 inflates content ~33%. 0 disables the limit. SECRET_MAX_FILE_BYTES.
+	MaxFileBytes int64
+
 	// AWS Parameter Store backend fields, used to build the aws-ssm:
 	// provider. AWS is enabled when a region or endpoint is set.
 	AWSRegion      string // AWS_REGION
@@ -108,12 +114,13 @@ func LoadConfig(paths []string, getenv func(string) string) (Config, error) {
 	}
 
 	cfg := Config{
-		ConnectHost: strings.TrimRight(lookup("OP_CONNECT_HOST"), "/"),
-		CacheDir:    DefaultCacheDir,
-		Timeout:     30 * time.Second,
-		CacheTTL:    5 * time.Minute,
-		MaxStale:    24 * time.Hour,
-		Source:      source,
+		ConnectHost:  strings.TrimRight(lookup("OP_CONNECT_HOST"), "/"),
+		CacheDir:     DefaultCacheDir,
+		Timeout:      30 * time.Second,
+		CacheTTL:     5 * time.Minute,
+		MaxStale:     24 * time.Hour,
+		MaxFileBytes: 1 << 20, // 1 MiB
+		Source:       source,
 	}
 
 	var err error
@@ -160,6 +167,13 @@ func LoadConfig(paths []string, getenv func(string) string) (Config, error) {
 	}
 	if v := lookup("OP_CACHE_DIR"); v != "" {
 		cfg.CacheDir = v
+	}
+	if v := lookup("SECRET_MAX_FILE_BYTES"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 {
+			return Config{}, fmt.Errorf("SECRET_MAX_FILE_BYTES: invalid byte count %q", v)
+		}
+		cfg.MaxFileBytes = n
 	}
 	// OP_CACHE_TTL=0 with OP_CACHE_MAX_STALE=0 means fully uncached;
 	// skip the cache dir entirely so nothing is written to disk.

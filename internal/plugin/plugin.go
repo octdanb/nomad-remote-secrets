@@ -50,6 +50,7 @@ func newRegistry(cfg Config) *provider.Registry {
 			Token:               cfg.Token,
 			Timeout:             cfg.Timeout,
 			Version:             Version,
+			MaxFileBytes:        cfg.MaxFileBytes,
 		}))
 	}
 	if cfg.AWSEnabled() {
@@ -63,10 +64,11 @@ func newRegistry(cfg Config) *provider.Registry {
 			Timeout:     cfg.Timeout,
 		}))
 		reg.Register(awssm.Scheme, awssm.New(awssm.Config{
-			Region:      cfg.AWSRegion,
-			Profile:     cfg.AWSProfile,
-			EndpointURL: cfg.AWSEndpointURL,
-			Timeout:     cfg.Timeout,
+			Region:       cfg.AWSRegion,
+			Profile:      cfg.AWSProfile,
+			EndpointURL:  cfg.AWSEndpointURL,
+			Timeout:      cfg.Timeout,
+			MaxFileBytes: cfg.MaxFileBytes,
 		}))
 	}
 	return reg
@@ -152,9 +154,11 @@ func fetch(stderr io.Writer, path string) (map[string]string, error) {
 			// Bare single reference: keep the flat key set
 			// ("value" plus field/label keys).
 			return result.Values, nil
-		case result.Object:
-			// Named whole item / object: prefix every key with the
-			// name, e.g. twilio_username, twilio_password.
+		case result.Object, isFile(result.Values):
+			// Named whole item / object (twilio_username, twilio_password),
+			// or a named file reference (cert_value, cert_value_base64,
+			// cert_filename): prefix every key with the entry name so the
+			// job can materialize it via a template block.
 			for k, v := range result.Values {
 				merged[entry.Name+"_"+k] = v
 			}
@@ -200,11 +204,26 @@ func fetchOne(ctx context.Context, stderr io.Writer, cfg Config, store *cache.Ca
 	return result, nil
 }
 
-// isObject reports whether a cached value set represents a whole item /
-// object rather than a scalar. A scalar always carries "value"; a whole item
-// never does, so its named-entry keys get the name_ prefix. The Object flag
-// isn't persisted in the cache, so it is reconstructed on a cache hit.
+// isFile reports whether a value set is a file reference, i.e. it carries the
+// always-present value_base64 key. Named file entries are prefix-expanded like
+// objects so the job can reach value_base64/filename from a template.
+func isFile(values map[string]string) bool {
+	_, ok := values["value_base64"]
+	return ok
+}
+
+// isObject reports whether a cached value set represents a whole item / object
+// rather than a scalar. A scalar always carries "value"; a whole item never
+// does, so its named-entry keys get the name_ prefix. The Object flag isn't
+// persisted in the cache, so it is reconstructed on a cache hit.
 func isObject(values map[string]string) bool {
-	_, hasValue := values["value"]
-	return !hasValue
+	if _, ok := values["value"]; ok {
+		return false
+	}
+	// A binary file reference carries no "value" (non-UTF-8 content) but is
+	// still scalar-ish: value_base64/filename, never object keys.
+	if _, ok := values["value_base64"]; ok {
+		return false
+	}
+	return true
 }

@@ -193,6 +193,36 @@ func TestDurationSettings(t *testing.T) {
 	}
 }
 
+func TestMaxFileBytes(t *testing.T) {
+	base := map[string]string{
+		"OP_CONNECT_HOST":  "http://x",
+		"OP_CONNECT_TOKEN": "t",
+	}
+
+	cfg, err := LoadConfig(nil, envMap(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MaxFileBytes != 1<<20 {
+		t.Errorf("default MaxFileBytes = %d, want %d", cfg.MaxFileBytes, 1<<20)
+	}
+
+	base["SECRET_MAX_FILE_BYTES"] = "4096"
+	if cfg, err = LoadConfig(nil, envMap(base)); err != nil || cfg.MaxFileBytes != 4096 {
+		t.Errorf("MaxFileBytes = %d, err = %v; want 4096", cfg.MaxFileBytes, err)
+	}
+
+	base["SECRET_MAX_FILE_BYTES"] = "0" // 0 disables the limit
+	if cfg, err = LoadConfig(nil, envMap(base)); err != nil || cfg.MaxFileBytes != 0 {
+		t.Errorf("MaxFileBytes = %d, err = %v; want 0", cfg.MaxFileBytes, err)
+	}
+
+	base["SECRET_MAX_FILE_BYTES"] = "banana"
+	if _, err = LoadConfig(nil, envMap(base)); err == nil {
+		t.Error("invalid byte count accepted")
+	}
+}
+
 func TestFullyDisabledCacheClearsDir(t *testing.T) {
 	cfg, err := LoadConfig(nil, envMap(map[string]string{
 		"OP_CONNECT_HOST":    "http://x",

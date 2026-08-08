@@ -32,6 +32,7 @@ type Config struct {
 	Token               string        // OP_CONNECT_TOKEN
 	Timeout             time.Duration // OP_REQUEST_TIMEOUT
 	Version             string        // plugin version, for SDK integration id
+	MaxFileBytes        int64         // SECRET_MAX_FILE_BYTES (0 disables)
 }
 
 // Source is the backend that resolves vaults and items. Two implementations
@@ -42,6 +43,9 @@ type Source interface {
 	// ListVaults returns every vault the credentials can see; used by the
 	// check command to verify connectivity and token scope.
 	ListVaults(ctx context.Context) ([]opitem.Vault, error)
+	// GetFileContent fetches the raw bytes of a file attached to an item —
+	// a document or a file-field attachment.
+	GetFileContent(ctx context.Context, vaultID, itemID, fileID string) ([]byte, error)
 }
 
 // Provider is the op:// implementation of provider.Provider.
@@ -81,11 +85,7 @@ func (p *Provider) Resolve(ctx context.Context, ref string) (provider.Result, er
 	if err != nil {
 		return provider.Result{}, err
 	}
-	values, err := resolve(ctx, p.src, r)
-	if err != nil {
-		return provider.Result{}, err
-	}
-	return provider.Result{Values: values, Object: r.WholeItem()}, nil
+	return resolve(ctx, p.src, r, p.cfg.MaxFileBytes)
 }
 
 // Ping verifies connectivity and credential scope for the check command.
@@ -164,30 +164,56 @@ func (l *lazyServiceAccount) ListVaults(ctx context.Context) ([]opitem.Vault, er
 	return l.src.ListVaults(ctx)
 }
 
-// resolve turns a parsed reference into the key/value map handed to Nomad.
-func resolve(ctx context.Context, src Source, ref opref.Ref) (map[string]string, error) {
+func (l *lazyServiceAccount) GetFileContent(ctx context.Context, vaultID, itemID, fileID string) ([]byte, error) {
+	if err := l.ensure(ctx); err != nil {
+		return nil, err
+	}
+	return l.src.GetFileContent(ctx, vaultID, itemID, fileID)
+}
+
+// resolve turns a parsed reference into the Result handed to Nomad.
+func resolve(ctx context.Context, src Source, ref opref.Ref, maxFileBytes int64) (provider.Result, error) {
 	vault, err := src.GetVault(ctx, ref.Vault)
 	if err != nil {
-		return nil, fmt.Errorf("resolving %s: %w", ref, err)
+		return provider.Result{}, fmt.Errorf("resolving %s: %w", ref, err)
 	}
 	item, err := src.GetItem(ctx, vault.ID, ref.Item)
 	if err != nil {
-		return nil, fmt.Errorf("resolving %s: %w", ref, err)
+		return provider.Result{}, fmt.Errorf("resolving %s: %w", ref, err)
 	}
 
 	if ref.WholeItem() {
-		return itemValues(item), nil
+		// A Document item, or ?attribute=file on any item, resolves to the
+		// item's file content rather than its fields.
+		if ref.IsFile() || strings.EqualFold(item.Category, "DOCUMENT") {
+			file, err := documentFile(item, ref)
+			if err != nil {
+				return provider.Result{}, err
+			}
+			return fileResult(ctx, src, vault.ID, item, file, ref, maxFileBytes)
+		}
+		return provider.Result{Values: itemValues(item), Object: true}, nil
 	}
 
 	field, err := findField(item, ref)
 	if err != nil {
-		return nil, err
+		return provider.Result{}, err
+	}
+
+	// A FILE-type field, or ?attribute=file on a field, resolves to the
+	// attached file's content.
+	if ref.IsFile() || field.FileID != "" {
+		file, err := fieldFile(item, field, ref)
+		if err != nil {
+			return provider.Result{}, err
+		}
+		return fileResult(ctx, src, vault.ID, item, file, ref, maxFileBytes)
 	}
 
 	value := field.Value
 	if ref.Attribute == "otp" {
 		if field.TOTP == "" {
-			return nil, fmt.Errorf("%s: field is not a one-time password field", ref)
+			return provider.Result{}, fmt.Errorf("%s: field is not a one-time password field", ref)
 		}
 		value = field.TOTP
 	}
@@ -198,7 +224,62 @@ func resolve(ctx context.Context, src Source, ref opref.Ref) (map[string]string,
 	if k := sanitizeKey(fieldKey(*field)); k != "" && k != "value" {
 		values[k] = value
 	}
-	return values, nil
+	return provider.Result{Values: values, Object: false}, nil
+}
+
+// documentFile picks the file backing a whole-item file reference. A Document
+// item has exactly one document file; ?attribute=file on a non-document item
+// falls back to a sole attachment.
+func documentFile(item *opitem.Item, ref opref.Ref) (opitem.File, error) {
+	// Prefer a document (top-level, not tied to a field).
+	var docs []opitem.File
+	for _, f := range item.Files {
+		if f.FieldID == "" {
+			docs = append(docs, f)
+		}
+	}
+	switch {
+	case len(docs) == 1:
+		return docs[0], nil
+	case len(docs) == 0 && len(item.Files) == 1:
+		return item.Files[0], nil
+	case len(item.Files) == 0:
+		return opitem.File{}, fmt.Errorf("%s: item %q has no file content", ref, item.Title)
+	default:
+		return opitem.File{}, fmt.Errorf("%s: item %q has multiple files; reference a field instead", ref, item.Title)
+	}
+}
+
+// fieldFile picks the file backing a FILE-type field reference.
+func fieldFile(item *opitem.Item, field *opitem.Field, ref opref.Ref) (opitem.File, error) {
+	id := field.FileID
+	for _, f := range item.Files {
+		if (id != "" && f.ID == id) || (id == "" && f.FieldID == field.ID) {
+			return f, nil
+		}
+	}
+	return opitem.File{}, fmt.Errorf("%s: field %q has no attached file", ref, ref.Field)
+}
+
+// fileResult fetches a file's bytes, enforces the size guardrail, and builds
+// the file Result. ?encoding=base64 drops the utf8 "value" key.
+func fileResult(ctx context.Context, src Source, vaultID string, item *opitem.Item, file opitem.File, ref opref.Ref, maxFileBytes int64) (provider.Result, error) {
+	if maxFileBytes > 0 && int64(file.Size) > maxFileBytes {
+		return provider.Result{}, fmt.Errorf("%s: file %q is %d bytes, exceeding SECRET_MAX_FILE_BYTES=%d", ref, file.Name, file.Size, maxFileBytes)
+	}
+	data, err := src.GetFileContent(ctx, vaultID, item.ID, file.ID)
+	if err != nil {
+		return provider.Result{}, fmt.Errorf("resolving %s: %w", ref, err)
+	}
+	if maxFileBytes > 0 && int64(len(data)) > maxFileBytes {
+		return provider.Result{}, fmt.Errorf("%s: file %q is %d bytes, exceeding SECRET_MAX_FILE_BYTES=%d", ref, file.Name, len(data), maxFileBytes)
+	}
+
+	res := provider.FileResult(file.Name, data)
+	if ref.Encoding == "base64" {
+		delete(res.Values, "value")
+	}
+	return res, nil
 }
 
 // itemValues flattens every non-empty field of an item into interpolation

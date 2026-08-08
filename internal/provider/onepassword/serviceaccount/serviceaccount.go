@@ -110,6 +110,38 @@ func (s *Source) GetItem(ctx context.Context, vaultID, nameOrID string) (*opitem
 	return toOpItem(&item), nil
 }
 
+// GetFileContent fetches a file's bytes via the SDK's items/files API. The SDK
+// keys reads by the file's section and field IDs, so callers pass the file ID
+// (which the SDK resolves against the item); the section/field are looked up
+// from the item's file list.
+func (s *Source) GetFileContent(ctx context.Context, vaultID, itemID, fileID string) ([]byte, error) {
+	item, err := s.client.Items().Get(ctx, vaultID, itemID)
+	if err != nil {
+		return nil, fmt.Errorf("reading item: %w", err)
+	}
+
+	// A Document item's content is addressed by its document attributes.
+	if item.Document != nil && item.Document.ID == fileID {
+		data, err := s.client.Items().Files().Read(ctx, vaultID, itemID, *item.Document)
+		if err != nil {
+			return nil, fmt.Errorf("reading document content: %w", err)
+		}
+		return data, nil
+	}
+
+	for _, f := range item.Files {
+		if f.Attributes.ID != fileID {
+			continue
+		}
+		data, err := s.client.Items().Files().Read(ctx, vaultID, itemID, f.Attributes)
+		if err != nil {
+			return nil, fmt.Errorf("reading file content: %w", err)
+		}
+		return data, nil
+	}
+	return nil, fmt.Errorf("file %q not found in item", fileID)
+}
+
 // toOpItem converts an SDK item into the backend-neutral model.
 func toOpItem(it *onepassword.Item) *opitem.Item {
 	out := &opitem.Item{
@@ -120,6 +152,28 @@ func toOpItem(it *onepassword.Item) *opitem.Item {
 	for _, s := range it.Sections {
 		out.Sections = append(out.Sections, opitem.Section{ID: s.ID, Label: s.Title})
 	}
+
+	// File attachments (and, for Document items, the document itself). Index
+	// them by field ID so FILE-type fields carry a FileID for lazy fetching.
+	filesByField := map[string]string{}
+	for _, fl := range it.Files {
+		filesByField[fl.FieldID] = fl.Attributes.ID
+		out.Files = append(out.Files, opitem.File{
+			ID:        fl.Attributes.ID,
+			Name:      fl.Attributes.Name,
+			Size:      int(fl.Attributes.Size),
+			SectionID: fl.SectionID,
+			FieldID:   fl.FieldID,
+		})
+	}
+	if it.Document != nil {
+		out.Files = append(out.Files, opitem.File{
+			ID:   it.Document.ID,
+			Name: it.Document.Name,
+			Size: int(it.Document.Size),
+		})
+	}
+
 	for _, f := range it.Fields {
 		nf := opitem.Field{
 			ID:      f.ID,
@@ -130,6 +184,9 @@ func toOpItem(it *onepassword.Item) *opitem.Item {
 		}
 		if f.SectionID != nil {
 			nf.SectionID = *f.SectionID
+		}
+		if id, ok := filesByField[f.ID]; ok {
+			nf.FileID = id
 		}
 		if f.FieldType == onepassword.ItemFieldTypeTOTP {
 			nf.Type = "OTP"
