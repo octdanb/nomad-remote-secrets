@@ -50,7 +50,7 @@ aws_sm() {
 echo "==> building and installing plugin"
 make build
 $SUDO install -d "$PLUGIN_DIR/secrets"
-$SUDO install -m 0755 bin/secrets "$PLUGIN_DIR/secrets/secrets"
+$SUDO install -m 0755 bin/remote-secrets "$PLUGIN_DIR/secrets/remote-secrets"
 
 echo "==> starting localstack (SSM + Secrets Manager)"
 # Pin to the v3 community image: SSM and Secrets Manager are free/community
@@ -80,8 +80,8 @@ aws_sm create-secret --name prod/sm/creds \
     --secret-string '{"username":"sm-user","password":"sm-json-pass"}'
 
 echo "==> configuring AWS backend (localstack + dummy creds)"
-$SUDO install -d -m 0700 /etc/nomad-secret
-$SUDO tee /etc/nomad-secret/config.env >/dev/null <<EOF
+$SUDO install -d -m 0700 /etc/remote-secrets
+$SUDO tee /etc/remote-secrets/config.env >/dev/null <<EOF
 AWS_REGION=us-east-1
 AWS_ENDPOINT_URL=$LOCALSTACK_ENDPOINT
 AWS_ACCESS_KEY_ID=test
@@ -92,7 +92,7 @@ EOF
 
 echo "==> plugin self-check"
 $SUDO env AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test \
-  "$PLUGIN_DIR/secrets/secrets" check || fail "plugin check failed"
+  "$PLUGIN_DIR/secrets/remote-secrets" check || fail "plugin check failed"
 
 echo "==> starting nomad dev agent ($($NOMAD_BIN version | head -1))"
 $SUDO env AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test \

@@ -1,26 +1,26 @@
 # Installs the multi-provider `secrets` Nomad secret provider plugin (the role
 # directory keeps its historical name for compatibility with existing
-# playbooks/terraform). The provider name is `secrets`; the reference scheme
+# playbooks/terraform). The provider name is `remote-secrets`; the reference scheme
 # (op://, aws-ssm:, aws-sm:) selects the backend.
 #
 # Credentials are NOT laid down here:
-# /etc/nomad-secret/{config.env,token} comes from first-boot user
+# /etc/remote-secrets/{config.env,token} comes from first-boot user
 # data (AMI) or your host-specific provisioning (bare metal), so the same role
 # output is safe to bake into an image.
 - name: Install plugin binary
   ansible.builtin.copy:
-    src: "{{ onepassword_plugin_binary }}"
-    dest: "{{ nomad_plugin_dir }}/secrets/secrets"
+    src: "{{ remote_secrets_plugin_binary }}"
+    dest: "{{ nomad_plugin_dir }}/secrets/remote-secrets"
     mode: "0755"
 
 - name: Plugin config directory (root-only)
   ansible.builtin.file:
-    path: /etc/nomad-secret
+    path: /etc/remote-secrets
     state: directory
     mode: "0700"
 
 - name: Verify the plugin fingerprints
-  ansible.builtin.command: "{{ nomad_plugin_dir }}/secrets/secrets fingerprint"
+  ansible.builtin.command: "{{ nomad_plugin_dir }}/secrets/remote-secrets fingerprint"
   register: secrets_fingerprint
   changed_when: false
   failed_when: "'\"type\"' not in secrets_fingerprint.stdout"

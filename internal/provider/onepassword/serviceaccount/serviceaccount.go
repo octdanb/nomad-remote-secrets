@@ -12,7 +12,7 @@ import (
 
 	onepassword "github.com/1password/onepassword-sdk-go"
 
-	"github.com/octdanb/nomad-secret-plugin/internal/provider/onepassword/opitem"
+	"github.com/octdanb/nomad-remote-secrets/internal/provider/onepassword/opitem"
 )
 
 // Source resolves vaults and items with a service account token.
@@ -25,7 +25,7 @@ type Source struct {
 func New(ctx context.Context, token, integrationVersion string) (*Source, error) {
 	client, err := onepassword.NewClient(ctx,
 		onepassword.WithServiceAccountToken(token),
-		onepassword.WithIntegrationInfo("nomad-secret-plugin", integrationVersion),
+		onepassword.WithIntegrationInfo("nomad-remote-secrets", integrationVersion),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("authenticating 1Password service account: %w", err)

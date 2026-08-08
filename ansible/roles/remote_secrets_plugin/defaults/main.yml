@@ -1,0 +1,6 @@
+# Path (on the Ansible control machine) to the multi-provider `remote-secrets`
+# plugin binary to install. Build with `make release` at the repository root.
+remote_secrets_plugin_binary: >-
+  {{ playbook_dir }}/../bin/remote-secrets_linux_{{ 'arm64' if ansible_facts.architecture == 'aarch64' else 'amd64' }}
+
+nomad_plugin_dir: /opt/nomad/plugins

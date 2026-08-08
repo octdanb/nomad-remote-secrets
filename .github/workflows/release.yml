@@ -1,12 +1,12 @@
 name: Release
 
 # Publishes the compiled multi-provider secret plugin as GitHub Release
-# assets. The provider name is `secrets` (the reference scheme selects the
+# assets. The provider name is `remote-secrets` (the reference scheme selects the
 # backend). Trigger by pushing a semver tag that matches the plugin Version:
 #
 #   git tag v0.5.0 && git push origin v0.5.0
 #
-# Produces secrets_linux_amd64, secrets_linux_arm64, and a SHA256SUMS file
+# Produces remote-secrets_linux_amd64, remote-secrets_linux_arm64, and a SHA256SUMS file
 # that Ansible can pin against with `checksum:`.
 
 on:
@@ -34,14 +34,14 @@ jobs:
 
       - name: Checksums
         working-directory: bin
-        run: sha256sum secrets_linux_amd64 secrets_linux_arm64 > SHA256SUMS
+        run: sha256sum remote-secrets_linux_amd64 remote-secrets_linux_arm64 > SHA256SUMS
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            bin/secrets_linux_amd64
-            bin/secrets_linux_arm64
+            bin/remote-secrets_linux_amd64
+            bin/remote-secrets_linux_arm64
             bin/SHA256SUMS
           generate_release_notes: true
           fail_on_unmatched_files: true

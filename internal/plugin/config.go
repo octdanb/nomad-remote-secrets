@@ -13,7 +13,7 @@ import (
 
 // DefaultCacheDir is where fetched secrets are cached between plugin
 // invocations unless OP_CACHE_DIR overrides it.
-const DefaultCacheDir = "/var/cache/nomad-secret"
+const DefaultCacheDir = "/var/cache/remote-secrets"
 
 // Config holds everything a fetch needs. The 1Password backend fields are
 // used to build the op:// provider; a service account token (direct to

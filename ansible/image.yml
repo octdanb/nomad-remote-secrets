@@ -4,7 +4,7 @@
 #
 #   ansible-playbook -i inventory image.yml \
 #     -e nomad_version=1.11.0 -e traefik_version=3.5.2 \
-#     -e onepassword_plugin_binary=/path/to/secrets_linux_amd64
+#     -e remote_secrets_plugin_binary=/path/to/remote-secrets_linux_amd64
 #
 # For an AMI, services are left disabled (first-boot user data configures
 # and enables them). On bare metal, set e.g. -e nomad_service_enabled=true
@@ -16,5 +16,5 @@
     - base
     - docker
     - nomad
-    - onepassword_plugin
+    - remote_secrets_plugin
     - traefik

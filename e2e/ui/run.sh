@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end UI test: boot a real Nomad dev agent with the secrets plugin,
+# End-to-end UI test: boot a real Nomad dev agent with the remote-secrets plugin,
 # deploy a long-running service job whose secrets resolve through a fake
 # 1Password Connect, then drive the Nomad web UI with Playwright to prove the
 # resolved secret values never render in the console.
@@ -33,7 +33,7 @@ fail() {
 echo "==> building and installing plugin"
 make build
 $SUDO install -d "$PLUGIN_DIR/secrets"
-$SUDO install -m 0755 bin/secrets "$PLUGIN_DIR/secrets/secrets"
+$SUDO install -m 0755 bin/remote-secrets "$PLUGIN_DIR/secrets/remote-secrets"
 
 echo "==> starting fake 1Password Connect"
 go run ./e2e/fakeconnect >/tmp/nomad-ui-connect.log 2>&1 &
@@ -43,8 +43,8 @@ for _ in $(seq 1 30); do
   sleep 0.5
 done
 
-$SUDO install -d -m 0700 /etc/nomad-secret
-$SUDO tee /etc/nomad-secret/config.env >/dev/null <<'EOF'
+$SUDO install -d -m 0700 /etc/remote-secrets
+$SUDO tee /etc/remote-secrets/config.env >/dev/null <<'EOF'
 OP_CONNECT_HOST=http://127.0.0.1:8999
 OP_CONNECT_TOKEN=e2e-test-token
 OP_CACHE_TTL=0

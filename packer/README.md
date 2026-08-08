@@ -7,7 +7,7 @@ Builds a versioned, org-shareable AMI in **ap-southeast-2** on **Ubuntu
 |---|---|
 | Nomad (pinned, ≥ 1.11) | installed, **disabled** until configured |
 | Docker Engine | installed, enabled |
-| multi-provider `secrets` plugin | installed at `/opt/nomad/plugins/secrets/secrets` |
+| multi-provider `remote-secrets` plugin | installed at `/opt/nomad/plugins/secrets/remote-secrets` |
 | Traefik (pinned) | installed, **disabled** — opt-in per instance |
 
 The image contains **no credentials and no environment-specific settings**.
@@ -18,13 +18,13 @@ image serves every cluster, environment, and node pool.
 
 Provisioning is **Ansible** ([../ansible/](../ansible/)) driven by Packer's
 ansible provisioner — the same roles (`base`, `docker`, `nomad`,
-`onepassword_plugin`, `traefik`) provision bare-metal or long-lived EC2
+`remote_secrets_plugin`, `traefik`) provision bare-metal or long-lived EC2
 hosts:
 
 ```sh
 ansible-playbook -i your-inventory ../ansible/image.yml \
   -e nomad_version=1.11.0 \
-  -e onepassword_plugin_binary=/path/to/secrets_linux_amd64 \
+  -e remote_secrets_plugin_binary=/path/to/remote-secrets_linux_amd64 \
   -e nomad_service_enabled=true -e traefik_service_enabled=true
 ```
 
@@ -39,12 +39,12 @@ on AMI instances first-boot user data writes them.)
   account), with IAM permissions for Packer's EC2 build lifecycle plus
   `ec2:ModifyImageAttribute` (for org sharing).
 - The plugin binary: run `make release` at the repository root first — the
-  build installs `bin/secrets_linux_<arch>`.
+  build installs `bin/remote-secrets_linux_<arch>`.
 
 ## Build
 
 ```sh
-make release          # repo root: builds bin/secrets_linux_{amd64,arm64}
+make release          # repo root: builds bin/remote-secrets_linux_{amd64,arm64}
 cd packer
 packer init .
 packer build \
@@ -219,7 +219,7 @@ RPC is internal); tokens are for the HTTP API — humans, CI, and Traefik.
 
 User data writes, at first boot:
 
-- `/etc/nomad-secret/token` + `config.env` — the vault-scoped
+- `/etc/remote-secrets/token` + `config.env` — the vault-scoped
   service account token (or `OP_CONNECT_HOST`/token for a Connect backend).
   The host config file also locks backend settings against override from
   job-submitted `env {}` blocks.
@@ -228,7 +228,7 @@ User data writes, at first boot:
   on the instance profile), plus anything passed in `nomad_extra_hcl`.
 - optionally `/etc/traefik/traefik.env`.
 
-It then runs `secrets check` (result lands in `/var/log/user-data.log`
+It then runs `remote-secrets check` (result lands in `/var/log/user-data.log`
 and the instance console log) and starts services. Nomad and Traefik stay
 disabled unless user data configures them, so an instance launched without
 user data joins nothing and leaks nothing.
@@ -239,7 +239,7 @@ provider), SSM, or Secrets Manager — never from source control.
 ## Debugging a node
 
 ```sh
-secrets check                              # config, backend, connectivity, vault scope
+remote-secrets check                              # config, backend, connectivity, vault scope
 cat /var/log/user-data.log                 # first-boot configuration output
 journalctl -u nomad -u traefik --since -1h
 ```

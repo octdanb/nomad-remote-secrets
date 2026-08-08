@@ -6,7 +6,7 @@ a pattern for **file-like secrets** (documents, attachments, binary secrets).
 
 ## Design decisions (locked)
 
-- **One binary, `secrets`.** Jobs use `provider = "secrets"` everywhere. The
+- **One binary, `secrets`.** Jobs use `provider = "remote-secrets"` everywhere. The
   **reference scheme** selects the backend at fetch time, so a single secret
   block may mix providers.
 - **JSON auto-expands to keys.** When a fetched value parses as a JSON object,
@@ -14,7 +14,7 @@ a pattern for **file-like secrets** (documents, attachments, binary secrets).
   stays at `${secret.block.value}`. Mirrors 1Password whole-item behavior.
 - **Credentials only from host config / agent env, never the job.** The scheme
   in a job's path selects a backend, not credentials — no redirection risk.
-- Back-compat: the `onepassword` binary name and `/etc/nomad-secret/`
+- Back-compat: the `onepassword` binary name and `/etc/remote-secrets/`
   config path keep working via install aliases.
 
 ### Reference schemes
@@ -77,7 +77,7 @@ Returned keys for a file reference:
 Job pattern (materialize into tmpfs `secrets/`, never `local/` or env for large blobs):
 
 ```hcl
-secret "cert" { provider = "secrets"  path = "aws-sm:prod/tls/bundle" }
+secret "cert" { provider = "remote-secrets"  path = "aws-sm:prod/tls/bundle" }
 template {
   data        = "{{ \"${secret.cert.value_base64}\" | base64Decode }}"
   destination = "secrets/bundle.p12"
