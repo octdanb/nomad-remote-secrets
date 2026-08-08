@@ -53,6 +53,37 @@ jobs:
       - name: Run e2e (fake 1Password, docker driver)
         run: ./e2e/run.sh
 
+  # Drives the Nomad web UI with Playwright to prove resolved secret values
+  # never render in the console (hermetic, fake 1Password Connect).
+  ui-e2e:
+    runs-on: ubuntu-latest
+    needs: test
+    env:
+      NOMAD_VERSION: "1.11.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install Nomad
+        run: |
+          curl -fsSL https://apt.releases.hashicorp.com/gpg \
+            | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp.gpg
+          echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
+            | sudo tee /etc/apt/sources.list.d/hashicorp.list
+          sudo apt-get update
+          sudo apt-get install -y "nomad=$NOMAD_VERSION-1"
+      - name: Run UI e2e (fake 1Password, Playwright)
+        run: ./e2e/ui/run.sh
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: e2e/ui/playwright-report/
+
   # Same round-trip against a REAL 1Password vault via a service account.
   # Enable by setting repo variable OP_E2E_ENABLED=true — see e2e/README.md
   # for the vault/item/secret setup.
