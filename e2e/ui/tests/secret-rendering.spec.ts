@@ -19,6 +19,18 @@ const NOMAD_ADDR = process.env.NOMAD_ADDR || 'http://127.0.0.1:4646';
 // *reference* (e.g. ${secret.db.value}) but never the resolved value.
 const SECRET_ENV_KEYS = ['DB_PASSWORD', 'APP_PW', 'APP_REPLICA', 'APP_USER', 'APP_DB_HOST'];
 
+// The Nomad UI is an Ember SPA driven by blocking/long-poll queries, so
+// `networkidle` never settles. Instead we load the DOM and wait for a marker
+// string to be rendered by the SPA before asserting.
+async function gotoSettled(page: Page, url: string, marker: string) {
+  await page.goto(url, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(
+    (m) => (document.body?.innerText ?? '').includes(m),
+    marker,
+    { timeout: 20000 },
+  );
+}
+
 async function fetchAllocId(request: APIRequestContext): Promise<string> {
   const res = await request.get(`${NOMAD_ADDR}/v1/job/${JOB}/allocations`);
   expect(res.ok(), `job ${JOB} allocations query failed`).toBeTruthy();
@@ -41,8 +53,7 @@ async function expectNoLeak(page: Page, where: string) {
 
 test.describe('Nomad UI never exposes resolved plugin secrets', () => {
   test('job definition shows secret references, not values', async ({ page }) => {
-    await page.goto(`/ui/jobs/${JOB}/definition`);
-    await page.waitForLoadState('networkidle');
+    await gotoSettled(page, `/ui/jobs/${JOB}/definition`, JOB);
 
     // Positive control: the raw definition should reference the secret plumbing
     // (proving the plugin's secret blocks are actually part of this job) while
@@ -56,13 +67,11 @@ test.describe('Nomad UI never exposes resolved plugin secrets', () => {
   test('allocation overview and task pages redact secret values', async ({ page, request }) => {
     const allocId = await fetchAllocId(request);
 
-    await page.goto(`/ui/allocations/${allocId}`);
-    await page.waitForLoadState('networkidle');
+    await gotoSettled(page, `/ui/allocations/${allocId}`, 'sleep');
     await expectNoLeak(page, `allocation ${allocId}`);
 
     // Task detail page — env vars surface here in the Nomad UI.
-    await page.goto(`/ui/allocations/${allocId}/sleep`);
-    await page.waitForLoadState('networkidle');
+    await gotoSettled(page, `/ui/allocations/${allocId}/sleep`, 'sleep');
     await expectNoLeak(page, `task page for alloc ${allocId}`);
   });
 
