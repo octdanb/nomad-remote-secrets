@@ -387,8 +387,7 @@ Some secrets are files rather than scalar strings: a 1Password **document**, a
 **file-field attachment**, or an AWS Secrets Manager **binary** secret. The
 plugin never writes files itself (it's a short-lived per-fetch process, and
 side-effecting the filesystem would break Nomad's rendering and redaction).
-Instead it returns the content as ordinary interpolation keys that the job
-materializes into tmpfs `secrets/` with a `template` block.
+Instead it returns the content as ordinary interpolation keys.
 
 A file reference returns:
 
@@ -401,35 +400,37 @@ A file reference returns:
 Named file entries are prefixed like whole items, so a `cert` entry exposes
 `cert_value`, `cert_value_base64`, and `cert_filename`.
 
-**Text file** (UTF-8, e.g. a PEM bundle):
+**Materialize into a file** by exposing the value as an env var and having the
+task write it into the task's tmpfs secrets dir (`$NOMAD_SECRETS_DIR`, i.e.
+`secrets/`). Nomad interpolates `${secret...}` into `env {}` but **not** into a
+`template` block's `data`, so use the env path, not a template.
+
+Text file (UTF-8, e.g. a PEM bundle):
 
 ```hcl
 secret "cert" {
   provider = "remote-secrets"
   path     = "bundle = op://Prod/tls-bundle" # a Document item
 }
-
-template {
-  data        = "${secret.cert.bundle_value}"
-  destination = "secrets/bundle.pem"
-  perms       = "0400"
-}
+env { BUNDLE = "${secret.cert.bundle_value}" }
+# in the task's command / entrypoint:
+#   printf '%s' "$BUNDLE" > "$NOMAD_SECRETS_DIR/bundle.pem"
 ```
 
-**Binary file** (e.g. a PKCS#12 keystore) — decode the base64:
+Binary file (e.g. a PKCS#12 keystore) — decode the base64:
 
 ```hcl
 secret "ks" {
   provider = "remote-secrets"
   path     = "keystore = aws-sm:prod/tls/keystore" # a SecretBinary secret
 }
-
-template {
-  data        = "{{ \"${secret.ks.keystore_value_base64}\" | base64Decode }}"
-  destination = "secrets/keystore.p12"
-  perms       = "0400"
-}
+env { KEYSTORE_B64 = "${secret.ks.keystore_value_base64}" }
+# in the task's command / entrypoint:
+#   echo "$KEYSTORE_B64" | base64 -d > "$NOMAD_SECRETS_DIR/keystore.p12"
 ```
+
+Files in `$NOMAD_SECRETS_DIR` live on tmpfs, aren't rendered in the Nomad UI,
+and are removed when the alloc stops.
 
 Reference syntax per backend:
 
