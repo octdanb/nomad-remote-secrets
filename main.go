@@ -1,15 +1,18 @@
-// nomad-secret-plugin/onepassword is a Nomad secret provider plugin that
-// resolves 1Password secret references (op://vault/item/field) through a
-// 1Password Connect server.
+// nomad-secret-plugin/secrets is a multi-provider Nomad secret provider
+// plugin. Jobs use provider = "secrets" and the reference scheme selects the
+// backend at fetch time: op:// (1Password), aws-ssm: (AWS Parameter Store),
+// aws-sm: (AWS Secrets Manager).
 //
 // Nomad invokes the binary with an operation as the first argument:
 //
-//	onepassword fingerprint
-//	onepassword fetch op://<vault>/<item>[/<section>]/<field>
+//	secrets fingerprint
+//	secrets fetch op://<vault>/<item>[/<section>]/<field>
 //
-// Install the binary as <client.common_plugin_dir>/secrets/onepassword on
-// every Nomad client node; the executable's file name is the provider name
-// used in job specifications.
+// Install the binary as <client.common_plugin_dir>/secrets/secrets on every
+// Nomad client node; the executable's file name is the provider name used in
+// job specifications. The binary dispatches on the operation argument, not on
+// its own filename, so installing it additionally as .../secrets/onepassword
+// keeps provider = "onepassword" jobs working unchanged.
 package main
 
 import (
@@ -22,7 +25,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fail("usage: onepassword <fingerprint|fetch|check> [path]")
+		fail("usage: secrets <fingerprint|fetch|check> [path]")
 	}
 
 	switch os.Args[1] {

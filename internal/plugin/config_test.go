@@ -113,18 +113,6 @@ func TestServiceAccountTokenFile(t *testing.T) {
 	}
 }
 
-func TestCacheScopeSeparatesBackends(t *testing.T) {
-	connect := Config{ConnectHost: "http://c:8080", Token: "tok"}
-	sa := Config{ConnectHost: "http://c:8080", Token: "tok", ServiceAccountToken: "ops_x"}
-	if connect.cacheScope() == sa.cacheScope() {
-		t.Error("connect and service-account configs must not share cache entries")
-	}
-	sa2 := Config{ServiceAccountToken: "ops_y"}
-	if sa.cacheScope() == sa2.cacheScope() {
-		t.Error("different service account tokens must not share cache entries")
-	}
-}
-
 func TestMissingHostAndToken(t *testing.T) {
 	if _, err := LoadConfig(nil, envMap(nil)); err == nil || !strings.Contains(err.Error(), "OP_CONNECT_HOST") {
 		t.Errorf("err = %v, want missing-host error", err)
@@ -132,6 +120,50 @@ func TestMissingHostAndToken(t *testing.T) {
 	_, err := LoadConfig(nil, envMap(map[string]string{"OP_CONNECT_HOST": "http://x"}))
 	if err == nil || !strings.Contains(err.Error(), "token") {
 		t.Errorf("err = %v, want missing-token error", err)
+	}
+}
+
+func TestAWSOnlyConfigIsValid(t *testing.T) {
+	cfg, err := LoadConfig(nil, envMap(map[string]string{
+		"AWS_REGION": "us-east-1",
+	}))
+	if err != nil {
+		t.Fatalf("AWS-only config should be valid: %v", err)
+	}
+	if !cfg.AWSEnabled() || cfg.OPEnabled() {
+		t.Errorf("AWSEnabled=%v OPEnabled=%v", cfg.AWSEnabled(), cfg.OPEnabled())
+	}
+	if !cfg.AWSDecrypt {
+		t.Error("AWSDecrypt should default to true")
+	}
+}
+
+func TestAWSEndpointOnlyIsValid(t *testing.T) {
+	cfg, err := LoadConfig(nil, envMap(map[string]string{
+		"AWS_ENDPOINT_URL": "http://localhost:4566/",
+		"AWS_SSM_DECRYPT":  "false",
+	}))
+	if err != nil {
+		t.Fatalf("AWS endpoint-only config should be valid: %v", err)
+	}
+	if cfg.AWSEndpointURL != "http://localhost:4566" {
+		t.Errorf("endpoint = %q, want trailing slash trimmed", cfg.AWSEndpointURL)
+	}
+	if cfg.AWSDecrypt {
+		t.Error("AWS_SSM_DECRYPT=false should disable decryption")
+	}
+}
+
+func TestOPOnlyStillValid(t *testing.T) {
+	cfg, err := LoadConfig(nil, envMap(map[string]string{
+		"OP_CONNECT_HOST":  "http://x",
+		"OP_CONNECT_TOKEN": "t",
+	}))
+	if err != nil {
+		t.Fatalf("OP-only config should be valid: %v", err)
+	}
+	if !cfg.OPEnabled() || cfg.AWSEnabled() {
+		t.Errorf("OPEnabled=%v AWSEnabled=%v", cfg.OPEnabled(), cfg.AWSEnabled())
 	}
 }
 
@@ -158,6 +190,36 @@ func TestDurationSettings(t *testing.T) {
 	base["OP_CACHE_TTL"] = "banana"
 	if _, err = LoadConfig(nil, envMap(base)); err == nil {
 		t.Error("invalid duration accepted")
+	}
+}
+
+func TestMaxFileBytes(t *testing.T) {
+	base := map[string]string{
+		"OP_CONNECT_HOST":  "http://x",
+		"OP_CONNECT_TOKEN": "t",
+	}
+
+	cfg, err := LoadConfig(nil, envMap(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MaxFileBytes != 1<<20 {
+		t.Errorf("default MaxFileBytes = %d, want %d", cfg.MaxFileBytes, 1<<20)
+	}
+
+	base["SECRET_MAX_FILE_BYTES"] = "4096"
+	if cfg, err = LoadConfig(nil, envMap(base)); err != nil || cfg.MaxFileBytes != 4096 {
+		t.Errorf("MaxFileBytes = %d, err = %v; want 4096", cfg.MaxFileBytes, err)
+	}
+
+	base["SECRET_MAX_FILE_BYTES"] = "0" // 0 disables the limit
+	if cfg, err = LoadConfig(nil, envMap(base)); err != nil || cfg.MaxFileBytes != 0 {
+		t.Errorf("MaxFileBytes = %d, err = %v; want 0", cfg.MaxFileBytes, err)
+	}
+
+	base["SECRET_MAX_FILE_BYTES"] = "banana"
+	if _, err = LoadConfig(nil, envMap(base)); err == nil {
+		t.Error("invalid byte count accepted")
 	}
 }
 

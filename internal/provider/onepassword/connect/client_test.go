@@ -64,8 +64,16 @@ func fakeConnect(t *testing.T) *httptest.Server {
 			Fields: []Field{
 				{ID: "f1", Label: "username", Purpose: "USERNAME", Value: "app"},
 				{ID: "f2", Label: "password", Purpose: "PASSWORD", Value: "hunter2"},
+				{ID: "f3", Label: "cert", Type: "FILE", Value: "bundle.pem"},
+			},
+			Files: []File{
+				{ID: "file1", Name: "bundle.pem", Size: 12, FieldID: "f3", ContentPath: "/v1/vaults/" + vaultID + "/items/" + itemID + "/files/file1/content"},
 			},
 		})
+	}))
+
+	mux.HandleFunc("GET /v1/vaults/"+vaultID+"/items/"+itemID+"/files/file1/content", authed(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("cert-bytes\n\x00"))
 	}))
 
 	srv := httptest.NewServer(mux)
@@ -117,8 +125,45 @@ func TestGetItemByTitleFetchesFullItem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(it.Fields) != 2 || it.Fields[1].Value != "hunter2" {
+	if len(it.Fields) < 2 || it.Fields[1].Value != "hunter2" {
 		t.Fatalf("full item not fetched: %+v", it)
+	}
+}
+
+func TestGetItemCarriesFiles(t *testing.T) {
+	srv := fakeConnect(t)
+	c := New(srv.URL, "good-token", time.Second)
+
+	it, err := c.GetItem(context.Background(), vaultID, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(it.Files) != 1 || it.Files[0].ID != "file1" {
+		t.Fatalf("files not parsed: %+v", it.Files)
+	}
+	// The FILE field should carry the attached file's ID.
+	var cert *bool
+	for _, f := range it.Fields {
+		if f.ID == "f3" {
+			ok := f.FileID == "file1"
+			cert = &ok
+		}
+	}
+	if cert == nil || !*cert {
+		t.Fatalf("FILE field did not carry FileID: %+v", it.Fields)
+	}
+}
+
+func TestGetFileContent(t *testing.T) {
+	srv := fakeConnect(t)
+	c := New(srv.URL, "good-token", time.Second)
+
+	data, err := c.GetFileContent(context.Background(), vaultID, itemID, "file1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "cert-bytes\n\x00" {
+		t.Fatalf("file content = %q", data)
 	}
 }
 

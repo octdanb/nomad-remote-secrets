@@ -15,6 +15,10 @@ func TestParse(t *testing.T) {
 		{"spaces kept", "op://My Vault/db server/password", Ref{Vault: "My Vault", Item: "db server", Field: "password"}},
 		{"percent decoded", "op://My%20Vault/db/password", Ref{Vault: "My Vault", Item: "db", Field: "password"}},
 		{"otp attribute", "op://Prod/mfa/one-time password?attribute=otp", Ref{Vault: "Prod", Item: "mfa", Field: "one-time password", Attribute: "otp"}},
+		{"file attribute on item", "op://Prod/mydoc?attribute=file", Ref{Vault: "Prod", Item: "mydoc", Attribute: "file"}},
+		{"file attribute on field", "op://Prod/item/cert?attribute=file", Ref{Vault: "Prod", Item: "item", Field: "cert", Attribute: "file"}},
+		{"encoding base64", "op://Prod/mydoc?encoding=base64", Ref{Vault: "Prod", Item: "mydoc", Encoding: "base64"}},
+		{"attribute and encoding", "op://Prod/item/cert?attribute=file&encoding=base64", Ref{Vault: "Prod", Item: "item", Field: "cert", Attribute: "file", Encoding: "base64"}},
 		{"surrounding space", "  op://Prod/database/password  ", Ref{Vault: "Prod", Item: "database", Field: "password"}},
 		{"id segments", "op://abcdefghijklmnopqrstuvwxyz/item-id/credential", Ref{Vault: "abcdefghijklmnopqrstuvwxyz", Item: "item-id", Field: "credential"}},
 	}
@@ -44,79 +48,13 @@ func TestParseErrors(t *testing.T) {
 		{"wrong scheme", "vault://Prod/db/password"},
 		{"unknown attribute", "op://Prod/db/password?attribute=ssh"},
 		{"otp on whole item", "op://Prod/db?attribute=otp"},
+		{"unknown encoding", "op://Prod/db?encoding=hex"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if got, err := Parse(tc.in); err == nil {
 				t.Fatalf("Parse(%q) = %+v, want error", tc.in, got)
-			}
-		})
-	}
-}
-
-func TestParseAllSingle(t *testing.T) {
-	for _, in := range []string{
-		"op://Prod/database/password",
-		"op://Prod/db, with a comma/password", // commas never split a bare ref
-		"Prod/database/password",
-	} {
-		entries, err := ParseAll(in)
-		if err != nil {
-			t.Fatalf("ParseAll(%q) error: %v", in, err)
-		}
-		if len(entries) != 1 || entries[0].Name != "" {
-			t.Fatalf("ParseAll(%q) = %+v, want one unnamed entry", in, entries)
-		}
-	}
-}
-
-func TestParseAllMulti(t *testing.T) {
-	in := `
-		# database credentials
-		db_password = op://Production/database/password
-		api_key     = op://Production/api/credential
-		twilio      = op://Production/twilio-prod
-	`
-	entries, err := ParseAll(in)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 3 {
-		t.Fatalf("got %d entries, want 3: %+v", len(entries), entries)
-	}
-	if entries[0].Name != "db_password" || entries[0].Ref.Field != "password" {
-		t.Errorf("entry 0 = %+v", entries[0])
-	}
-	if entries[2].Name != "twilio" || !entries[2].Ref.WholeItem() {
-		t.Errorf("entry 2 = %+v, want whole-item ref", entries[2])
-	}
-}
-
-func TestParseAllCommaSeparated(t *testing.T) {
-	entries, err := ParseAll("a = op://P/x/f, b = op://P/y/g")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 2 || entries[1].Name != "b" {
-		t.Fatalf("entries = %+v", entries)
-	}
-}
-
-func TestParseAllErrors(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-	}{
-		{"duplicate name", "a = op://P/x/f\na = op://P/y/g"},
-		{"invalid name", "a = op://P/x/f\nbad-name = op://P/y/g"},
-		{"bad ref in entry", "a = op://P"},
-		{"only comments", "# nothing = op://here"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got, err := ParseAll(tc.in); err == nil {
-				t.Fatalf("ParseAll(%q) = %+v, want error", tc.in, got)
 			}
 		})
 	}
@@ -138,6 +76,8 @@ func TestString(t *testing.T) {
 		"op://Prod/database/password",
 		"op://Prod/api/tokens/publish",
 		"op://Prod/mfa/code?attribute=otp",
+		"op://Prod/mydoc?attribute=file",
+		"op://Prod/mydoc?encoding=base64",
 	} {
 		ref, err := Parse(in)
 		if err != nil {

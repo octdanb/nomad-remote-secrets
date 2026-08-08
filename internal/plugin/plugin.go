@@ -1,9 +1,10 @@
 // Package plugin implements the Nomad secret provider operations
-// (fingerprint and fetch) on top of 1Password Connect.
+// (fingerprint and fetch) on top of a provider-neutral backend abstraction.
 //
 // Nomad runs the binary as `<plugin> fingerprint` when the client agent
 // starts, and `<plugin> fetch <path>` for every secret block that names this
-// provider. Both operations must print a single JSON object to stdout.
+// provider. Both operations must print a single JSON object to stdout. The
+// reference scheme selects the backend at fetch time (op://, aws-ssm:, aws-sm:).
 package plugin
 
 import (
@@ -12,26 +13,14 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"regexp"
-	"strings"
 	"time"
 
 	"github.com/octdanb/nomad-secret-plugin/internal/cache"
-	"github.com/octdanb/nomad-secret-plugin/internal/connect"
-	"github.com/octdanb/nomad-secret-plugin/internal/opitem"
-	"github.com/octdanb/nomad-secret-plugin/internal/opref"
-	"github.com/octdanb/nomad-secret-plugin/internal/serviceaccount"
+	"github.com/octdanb/nomad-secret-plugin/internal/provider"
+	"github.com/octdanb/nomad-secret-plugin/internal/provider/awssm"
+	"github.com/octdanb/nomad-secret-plugin/internal/provider/awsssm"
+	"github.com/octdanb/nomad-secret-plugin/internal/provider/onepassword"
 )
-
-// Source is the backend that resolves vaults and items. Two implementations
-// exist: the Connect REST client and the service-account SDK backend.
-type Source interface {
-	GetVault(ctx context.Context, nameOrID string) (*opitem.Vault, error)
-	GetItem(ctx context.Context, vaultID, nameOrID string) (*opitem.Item, error)
-	// ListVaults returns every vault the credentials can see; used by the
-	// check command to verify connectivity and token scope.
-	ListVaults(ctx context.Context) ([]opitem.Vault, error)
-}
 
 // Version is reported to Nomad in the fingerprint response and used to
 // register the plugin on each client node.
@@ -47,31 +36,42 @@ var ConfigPaths = []string{
 	"/etc/nomad.d/onepassword.env",
 }
 
-// Config holds everything a fetch needs. Exactly one backend is used per
-// fetch: a service account token (direct to 1password.com) or a Connect
-// server; the service account wins when both are configured.
-type Config struct {
-	ServiceAccountToken string        // OP_SERVICE_ACCOUNT_TOKEN / OP_SERVICE_ACCOUNT_TOKEN_FILE
-	ConnectHost         string        // OP_CONNECT_HOST
-	Token               string        // OP_CONNECT_TOKEN / OP_CONNECT_TOKEN_FILE
-	Timeout             time.Duration // OP_REQUEST_TIMEOUT (default 30s)
-	CacheDir            string        // OP_CACHE_DIR
-	CacheTTL            time.Duration // OP_CACHE_TTL (default 5m, 0 disables)
-	MaxStale            time.Duration // OP_CACHE_MAX_STALE (default 24h, 0 disables fallback)
-
-	// Source records where the settings came from — the loaded config
-	// file path, or "agent environment" — so error messages can point
-	// operators at the right place.
-	Source string
-}
-
-// Describe names the active backend for error messages and diagnostics.
-// Tokens are never included.
-func (c Config) Describe() string {
-	if c.ServiceAccountToken != "" {
-		return "1Password service account"
+// newRegistry builds the provider registry from the loaded configuration.
+// Each provider is registered only when its backend is configured, so a
+// single-backend cluster keeps the scheme-less fallback (Route resolves a
+// bare reference to the sole provider) and a dual-backend cluster correctly
+// requires every reference to name its scheme.
+func newRegistry(cfg Config) *provider.Registry {
+	reg := provider.NewRegistry()
+	if cfg.OPEnabled() {
+		reg.Register(onepassword.Scheme, onepassword.New(onepassword.Config{
+			ServiceAccountToken: cfg.ServiceAccountToken,
+			ConnectHost:         cfg.ConnectHost,
+			Token:               cfg.Token,
+			Timeout:             cfg.Timeout,
+			Version:             Version,
+			MaxFileBytes:        cfg.MaxFileBytes,
+		}))
 	}
-	return "1Password Connect at " + c.ConnectHost
+	if cfg.AWSEnabled() {
+		// Parameter Store and Secrets Manager share the same AWS enablement
+		// (region or endpoint) and coexist under different schemes.
+		reg.Register(awsssm.Scheme, awsssm.New(awsssm.Config{
+			Region:      cfg.AWSRegion,
+			Profile:     cfg.AWSProfile,
+			EndpointURL: cfg.AWSEndpointURL,
+			Decrypt:     cfg.AWSDecrypt,
+			Timeout:     cfg.Timeout,
+		}))
+		reg.Register(awssm.Scheme, awssm.New(awssm.Config{
+			Region:       cfg.AWSRegion,
+			Profile:      cfg.AWSProfile,
+			EndpointURL:  cfg.AWSEndpointURL,
+			Timeout:      cfg.Timeout,
+			MaxFileBytes: cfg.MaxFileBytes,
+		}))
+	}
+	return reg
 }
 
 // fetchResponse is the JSON shape Nomad expects on stdout for fetch.
@@ -102,7 +102,7 @@ func Fetch(stdout, stderr io.Writer, path string) {
 }
 
 func fetch(stderr io.Writer, path string) (map[string]string, error) {
-	entries, err := opref.ParseAll(path)
+	entries, err := provider.SplitEntries(path)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +118,7 @@ func fetch(stderr io.Writer, path string) (map[string]string, error) {
 		if err != nil {
 			// A broken cache should degrade to uncached fetches, not
 			// block deploys.
-			fmt.Fprintf(stderr, "onepassword: cache disabled: %v\n", err)
+			fmt.Fprintf(stderr, "secrets: cache disabled: %v\n", err)
 			store = nil
 		}
 	}
@@ -127,278 +127,103 @@ func fetch(stderr io.Writer, path string) (map[string]string, error) {
 	// Nomad's 60-second kill window regardless of entry count.
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
-	src := newSource(cfg)
+	reg := newRegistry(cfg)
 
 	merged := map[string]string{}
 	for _, entry := range entries {
-		values, err := fetchOne(ctx, stderr, cfg, store, src, entry.Ref)
+		p, err := reg.Route(entry.Ref)
+		if err != nil {
+			if entry.Name != "" {
+				err = fmt.Errorf("entry %q: %w", entry.Name, err)
+			}
+			return nil, err
+		}
+
+		result, err := fetchOne(ctx, stderr, cfg, store, p, entry.Ref)
 		if err != nil {
 			if entry.Name != "" {
 				err = fmt.Errorf("entry %q: %w", entry.Name, err)
 			}
 			// This message becomes the Nomad task event the operator
 			// sees, so make it name the backend and config source.
-			return nil, fmt.Errorf("%w [backend: %s; config: %s; try `onepassword check` on this node]", err, cfg.Describe(), cfg.Source)
+			return nil, fmt.Errorf("%w [backend: %s; config: %s; try `secrets check` on this node]", err, p.Describe(), cfg.Source)
 		}
 
 		switch {
 		case entry.Name == "":
 			// Bare single reference: keep the flat key set
 			// ("value" plus field/label keys).
-			return values, nil
-		case entry.Ref.WholeItem():
-			// Named whole item: prefix every field with the name,
-			// e.g. twilio_username, twilio_password.
-			for k, v := range values {
+			return result.Values, nil
+		case result.Object, isFile(result.Values):
+			// Named whole item / object (twilio_username, twilio_password),
+			// or a named file reference (cert_value, cert_value_base64,
+			// cert_filename): prefix every key with the entry name so the
+			// job can materialize it via a template block.
+			for k, v := range result.Values {
 				merged[entry.Name+"_"+k] = v
 			}
 		default:
-			merged[entry.Name] = values["value"]
+			merged[entry.Name] = result.Values["value"]
 		}
 	}
 	return merged, nil
 }
 
-// newSource picks the backend from the configuration. A service account
-// token wins over Connect settings — configuring one is an explicit choice,
-// while Connect variables can linger in an agent's environment.
-//
-// The service-account source is wrapped so SDK authentication happens on
-// first use, inside fetchOne — that way an unreachable 1password.com still
-// falls back to the stale cache instead of failing before the cache is
-// consulted.
-func newSource(cfg Config) Source {
-	if cfg.ServiceAccountToken != "" {
-		return &lazyServiceAccount{token: cfg.ServiceAccountToken}
-	}
-	return connect.New(cfg.ConnectHost, cfg.Token, cfg.Timeout)
-}
-
-type lazyServiceAccount struct {
-	token string
-	src   *serviceaccount.Source
-}
-
-func (l *lazyServiceAccount) ensure(ctx context.Context) error {
-	if l.src != nil {
-		return nil
-	}
-	src, err := serviceaccount.New(ctx, l.token, Version)
-	if err != nil {
-		return err
-	}
-	l.src = src
-	return nil
-}
-
-func (l *lazyServiceAccount) GetVault(ctx context.Context, nameOrID string) (*opitem.Vault, error) {
-	if err := l.ensure(ctx); err != nil {
-		return nil, err
-	}
-	return l.src.GetVault(ctx, nameOrID)
-}
-
-func (l *lazyServiceAccount) GetItem(ctx context.Context, vaultID, nameOrID string) (*opitem.Item, error) {
-	if err := l.ensure(ctx); err != nil {
-		return nil, err
-	}
-	return l.src.GetItem(ctx, vaultID, nameOrID)
-}
-
-func (l *lazyServiceAccount) ListVaults(ctx context.Context) ([]opitem.Vault, error) {
-	if err := l.ensure(ctx); err != nil {
-		return nil, err
-	}
-	return l.src.ListVaults(ctx)
-}
-
 // fetchOne resolves a single reference through the cache: fresh cache hit,
-// then a live fetch, then — if the backend is unreachable — a stale cache
+// then a live resolve, then — if the backend is unreachable — a stale cache
 // entry within the configured age bound.
-func fetchOne(ctx context.Context, stderr io.Writer, cfg Config, store *cache.Cache, src Source, ref opref.Ref) (map[string]string, error) {
-	cacheKey := cfg.cacheScope() + "|" + ref.String()
-
-	// OTP codes rotate every 30 seconds; serving them from cache would
-	// hand out expired codes.
-	cacheable := ref.Attribute != "otp"
+func fetchOne(ctx context.Context, stderr io.Writer, cfg Config, store *cache.Cache, p provider.Provider, ref string) (provider.Result, error) {
+	cacheKey, cacheable, err := p.CacheKey(ref)
+	if err != nil {
+		return provider.Result{}, err
+	}
 
 	if store != nil && cacheable {
 		if values, ok := store.Get(cacheKey); ok {
-			return values, nil
+			return provider.Result{Values: values, Object: isObject(values)}, nil
 		}
 	}
 
-	values, err := resolve(ctx, src, ref)
+	result, err := p.Resolve(ctx, ref)
 	if err != nil {
 		if store != nil && cacheable && cfg.MaxStale > 0 {
 			if stale, age, ok := store.Stale(cacheKey, cfg.MaxStale); ok {
-				fmt.Fprintf(stderr, "onepassword: 1Password unavailable (%v); serving cached value %s old for %s\n",
+				fmt.Fprintf(stderr, "secrets: backend unavailable (%v); serving cached value %s old for %s\n",
 					err, age.Round(time.Second), ref)
-				return stale, nil
+				return provider.Result{Values: stale, Object: isObject(stale)}, nil
 			}
 		}
-		return nil, err
+		return provider.Result{}, err
 	}
 
 	if store != nil && cacheable {
-		if err := store.Put(cacheKey, values); err != nil {
-			fmt.Fprintf(stderr, "onepassword: failed to write cache: %v\n", err)
+		if err := store.Put(cacheKey, result.Values); err != nil {
+			fmt.Fprintf(stderr, "secrets: failed to write cache: %v\n", err)
 		}
 	}
-	return values, nil
+	return result, nil
 }
 
-// resolve turns a parsed reference into the key/value map handed to Nomad.
-func resolve(ctx context.Context, src Source, ref opref.Ref) (map[string]string, error) {
-	vault, err := src.GetVault(ctx, ref.Vault)
-	if err != nil {
-		return nil, fmt.Errorf("resolving %s: %w", ref, err)
-	}
-	item, err := src.GetItem(ctx, vault.ID, ref.Item)
-	if err != nil {
-		return nil, fmt.Errorf("resolving %s: %w", ref, err)
-	}
-
-	if ref.WholeItem() {
-		return itemValues(item), nil
-	}
-
-	field, err := findField(item, ref)
-	if err != nil {
-		return nil, err
-	}
-
-	value := field.Value
-	if ref.Attribute == "otp" {
-		if field.TOTP == "" {
-			return nil, fmt.Errorf("%s: field is not a one-time password field", ref)
-		}
-		value = field.TOTP
-	}
-
-	// "value" is the stable key for single-field references; the
-	// sanitized field label is included as a convenience alias.
-	values := map[string]string{"value": value}
-	if k := sanitizeKey(fieldKey(*field)); k != "" && k != "value" {
-		values[k] = value
-	}
-	return values, nil
+// isFile reports whether a value set is a file reference, i.e. it carries the
+// always-present value_base64 key. Named file entries are prefix-expanded like
+// objects so the job can reach value_base64/filename from a template.
+func isFile(values map[string]string) bool {
+	_, ok := values["value_base64"]
+	return ok
 }
 
-// itemValues flattens every non-empty field of an item into interpolation
-// keys. Fields inside a section are prefixed with the section label so that
-// identically named fields in different sections don't collide.
-func itemValues(item *opitem.Item) map[string]string {
-	sections := sectionLabels(item)
-	values := map[string]string{}
-
-	for _, f := range item.Fields {
-		if f.Value == "" {
-			continue
-		}
-		key := fieldKey(f)
-		if f.SectionID != "" {
-			if label := sections[f.SectionID]; label != "" {
-				key = label + "_" + key
-			}
-		}
-		key = sanitizeKey(key)
-		if key == "" {
-			continue
-		}
-		// First field wins on collision; item field order is stable.
-		if _, exists := values[key]; !exists {
-			values[key] = f.Value
-		}
+// isObject reports whether a cached value set represents a whole item / object
+// rather than a scalar. A scalar always carries "value"; a whole item never
+// does, so its named-entry keys get the name_ prefix. The Object flag isn't
+// persisted in the cache, so it is reconstructed on a cache hit.
+func isObject(values map[string]string) bool {
+	if _, ok := values["value"]; ok {
+		return false
 	}
-
-	// Guarantee the conventional keys for login items even when a label
-	// was customized.
-	for _, f := range item.Fields {
-		if f.Value == "" || f.SectionID != "" {
-			continue
-		}
-		switch f.Purpose {
-		case "USERNAME":
-			setDefault(values, "username", f.Value)
-		case "PASSWORD":
-			setDefault(values, "password", f.Value)
-		case "NOTES":
-			setDefault(values, "notes", f.Value)
-		}
+	// A binary file reference carries no "value" (non-UTF-8 content) but is
+	// still scalar-ish: value_base64/filename, never object keys.
+	if _, ok := values["value_base64"]; ok {
+		return false
 	}
-	return values
-}
-
-// findField locates the field a reference addresses, honouring the optional
-// section qualifier. Labels are matched case-insensitively; IDs exactly.
-func findField(item *opitem.Item, ref opref.Ref) (*opitem.Field, error) {
-	sections := sectionLabels(item)
-
-	var matches []*opitem.Field
-	for i := range item.Fields {
-		f := &item.Fields[i]
-
-		if ref.Section != "" {
-			if f.SectionID == "" {
-				continue
-			}
-			label := sections[f.SectionID]
-			if f.SectionID != ref.Section && !strings.EqualFold(label, ref.Section) {
-				continue
-			}
-		}
-
-		if f.ID == ref.Field || strings.EqualFold(f.Label, ref.Field) ||
-			strings.EqualFold(f.Purpose, ref.Field) {
-			matches = append(matches, f)
-		}
-	}
-
-	switch len(matches) {
-	case 0:
-		return nil, fmt.Errorf("%s: no field %q in item %q", ref, ref.Field, item.Title)
-	case 1:
-		return matches[0], nil
-	default:
-		// Prefer a field outside any section when the reference has no
-		// section qualifier — mirrors how 1Password resolves ambiguity.
-		if ref.Section == "" {
-			for _, f := range matches {
-				if f.SectionID == "" {
-					return f, nil
-				}
-			}
-		}
-		return nil, fmt.Errorf("%s: field %q is ambiguous in item %q; qualify it with a section", ref, ref.Field, item.Title)
-	}
-}
-
-func sectionLabels(item *opitem.Item) map[string]string {
-	labels := make(map[string]string, len(item.Sections))
-	for _, s := range item.Sections {
-		labels[s.ID] = s.Label
-	}
-	return labels
-}
-
-func fieldKey(f opitem.Field) string {
-	if f.Label != "" {
-		return f.Label
-	}
-	return f.ID
-}
-
-var keyCleaner = regexp.MustCompile(`[^A-Za-z0-9_]+`)
-
-// sanitizeKey rewrites a field label into a key that is safe to use in
-// Nomad's ${secret.<name>.<key>} interpolation syntax.
-func sanitizeKey(s string) string {
-	return strings.Trim(keyCleaner.ReplaceAllString(s, "_"), "_")
-}
-
-func setDefault(m map[string]string, key, value string) {
-	if _, ok := m[key]; !ok {
-		m[key] = value
-	}
+	return true
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # First-boot configuration for the nomad-client AMI, rendered by Terraform's
 # templatefile() (see usage below). The AMI ships Nomad, Docker, the
-# onepassword plugin, and Traefik installed but UNCONFIGURED — this script
+# multi-provider secrets plugin, and Traefik installed but UNCONFIGURED — this script
 # injects everything environment-specific and then starts the services.
 #
 # Terraform usage:
@@ -42,7 +42,7 @@ EOT
 umask 022
 
 # Fail fast (visibly, in this log) if the credentials or scope are wrong.
-/opt/nomad/plugins/secrets/onepassword check || echo "WARNING: onepassword check failed — secrets will not resolve until fixed"
+/opt/nomad/plugins/secrets/secrets check || echo "WARNING: secrets check failed — secrets will not resolve until fixed"
 
 # ---------------------------------------------------------------------- Nomad
 cat > /etc/nomad.d/runtime.hcl <<'EOT'

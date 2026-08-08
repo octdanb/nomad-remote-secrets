@@ -4,9 +4,15 @@ import { test, expect, Page, APIRequestContext } from '@playwright/test';
 // these strings appears anywhere in the rendered UI, the plugin (or Nomad) is
 // leaking secret material into the web console — the exact thing we forbid.
 // Override for the real backend via SECRET_VALUES="v1,v2,...".
+// The document file's content and its base64 encoding are also secret
+// material: a file-like secret is materialized into secrets/ via a template
+// and must never be rendered in the UI, in either form.
+const DOC_CONTENT = 'e2e-document-content';
+const DOC_CONTENT_B64 = Buffer.from(DOC_CONTENT + '\n').toString('base64');
+
 const SECRET_VALUES = (
   process.env.SECRET_VALUES ||
-  'hunter2-e2e,replica-pass-e2e,app-user,db.internal.test'
+  `hunter2-e2e,replica-pass-e2e,app-user,db.internal.test,${DOC_CONTENT},${DOC_CONTENT_B64}`
 )
   .split(',')
   .map((s) => s.trim())

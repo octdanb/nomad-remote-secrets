@@ -7,7 +7,7 @@ Builds a versioned, org-shareable AMI in **ap-southeast-2** on **Ubuntu
 |---|---|
 | Nomad (pinned, ≥ 1.11) | installed, **disabled** until configured |
 | Docker Engine | installed, enabled |
-| `onepassword` secret provider plugin | installed at `/opt/nomad/plugins/secrets/onepassword` |
+| multi-provider `secrets` plugin (+ `onepassword` alias) | installed at `/opt/nomad/plugins/secrets/secrets` |
 | Traefik (pinned) | installed, **disabled** — opt-in per instance |
 
 The image contains **no credentials and no environment-specific settings**.
@@ -24,7 +24,7 @@ hosts:
 ```sh
 ansible-playbook -i your-inventory ../ansible/image.yml \
   -e nomad_version=1.11.0 \
-  -e onepassword_plugin_binary=/path/to/onepassword_linux_amd64 \
+  -e onepassword_plugin_binary=/path/to/secrets_linux_amd64 \
   -e nomad_service_enabled=true -e traefik_service_enabled=true
 ```
 
@@ -39,12 +39,12 @@ on AMI instances first-boot user data writes them.)
   account), with IAM permissions for Packer's EC2 build lifecycle plus
   `ec2:ModifyImageAttribute` (for org sharing).
 - The plugin binary: run `make release` at the repository root first — the
-  build installs `bin/onepassword_linux_<arch>`.
+  build installs `bin/secrets_linux_<arch>`.
 
 ## Build
 
 ```sh
-make release          # repo root: builds bin/onepassword_linux_{amd64,arm64}
+make release          # repo root: builds bin/secrets_linux_{amd64,arm64}
 cd packer
 packer init .
 packer build \
@@ -228,7 +228,7 @@ User data writes, at first boot:
   on the instance profile), plus anything passed in `nomad_extra_hcl`.
 - optionally `/etc/traefik/traefik.env`.
 
-It then runs `onepassword check` (result lands in `/var/log/user-data.log`
+It then runs `secrets check` (result lands in `/var/log/user-data.log`
 and the instance console log) and starts services. Nomad and Traefik stay
 disabled unless user data configures them, so an instance launched without
 user data joins nothing and leaks nothing.
@@ -239,7 +239,7 @@ provider), SSM, or Secrets Manager — never from source control.
 ## Debugging a node
 
 ```sh
-onepassword check                          # config, backend, connectivity, vault scope
+secrets check                              # config, backend, connectivity, vault scope
 cat /var/log/user-data.log                 # first-boot configuration output
 journalctl -u nomad -u traefik --since -1h
 ```

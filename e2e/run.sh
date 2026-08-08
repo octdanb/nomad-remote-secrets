@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# End-to-end test: a real Nomad agent fingerprints the onepassword plugin,
-# runs a job whose secret blocks resolve through 1Password, and the secret
-# values land in the task environment.
+# End-to-end test: a real Nomad agent fingerprints the secrets plugin, runs a
+# job whose secret blocks resolve through 1Password, and the secret values
+# land in the task environment. The OP jobs use provider = "onepassword", so
+# this also exercises the back-compat install alias.
 #
 #   E2E_DRIVER=docker|raw_exec   task driver               (default docker)
 #   E2E_MODE=fake|real           1Password backend         (default fake)
@@ -37,7 +38,10 @@ fail() {
 echo "==> building and installing plugin"
 make build
 $SUDO install -d "$PLUGIN_DIR/secrets"
-$SUDO install -m 0755 bin/onepassword "$PLUGIN_DIR/secrets/onepassword"
+$SUDO install -m 0755 bin/secrets "$PLUGIN_DIR/secrets/secrets"
+# Back-compat alias: the OP e2e jobs use provider = "onepassword", so install
+# the same binary under that name too (dispatches on argv, not filename).
+$SUDO ln -sf secrets "$PLUGIN_DIR/secrets/onepassword"
 
 echo "==> configuring 1Password backend ($MODE)"
 $SUDO install -d -m 0700 /etc/nomad-secret-onepassword
@@ -64,6 +68,7 @@ EOF
     "REP=replica-pass-e2e"
     "USER=app-user"
     "HOST=db.internal.test"
+    "DOC=e2e-document-content"
   )
 else
   : "${OP_SERVICE_ACCOUNT_TOKEN:?real mode needs OP_SERVICE_ACCOUNT_TOKEN}"
@@ -81,7 +86,7 @@ EOF
 fi
 
 echo "==> plugin self-check"
-$SUDO "$PLUGIN_DIR/secrets/onepassword" check || fail "onepassword check failed"
+$SUDO "$PLUGIN_DIR/secrets/secrets" check || fail "plugin check failed"
 
 echo "==> starting nomad dev agent ($($NOMAD_BIN version | head -1))"
 $SUDO "$NOMAD_BIN" agent -dev -config e2e/agent.hcl >/tmp/nomad-e2e-agent.log 2>&1 &

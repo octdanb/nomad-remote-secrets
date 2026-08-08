@@ -1,6 +1,6 @@
-# Path (on the Ansible control machine) to the plugin binary to install.
-# Build with `make release` at the repository root.
+# Path (on the Ansible control machine) to the multi-provider `secrets`
+# plugin binary to install. Build with `make release` at the repository root.
 onepassword_plugin_binary: >-
-  {{ playbook_dir }}/../bin/onepassword_linux_{{ 'arm64' if ansible_facts.architecture == 'aarch64' else 'amd64' }}
+  {{ playbook_dir }}/../bin/secrets_linux_{{ 'arm64' if ansible_facts.architecture == 'aarch64' else 'amd64' }}
 
 nomad_plugin_dir: /opt/nomad/plugins

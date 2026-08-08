@@ -9,17 +9,20 @@ import (
 	"strings"
 
 	"github.com/octdanb/nomad-secret-plugin/internal/cache"
-	"github.com/octdanb/nomad-secret-plugin/internal/opref"
+	"github.com/octdanb/nomad-secret-plugin/internal/provider"
+	"github.com/octdanb/nomad-secret-plugin/internal/provider/awssm"
+	"github.com/octdanb/nomad-secret-plugin/internal/provider/awsssm"
+	"github.com/octdanb/nomad-secret-plugin/internal/provider/onepassword"
 )
 
-// Check is the operator diagnostic behind `onepassword check [reference]`.
+// Check is the operator diagnostic behind `secrets check [reference]`.
 // It reports how the plugin is configured on this node, verifies
 // connectivity and credential scope, and optionally dry-runs a secret
 // reference (or a multi-entry path). Secret values are never printed — for
 // references it prints only the interpolation keys that would be exposed.
 // It returns the process exit code.
 func Check(w io.Writer, path string) int {
-	fmt.Fprintf(w, "onepassword secret provider v%s — diagnostic\n\n", Version)
+	fmt.Fprintf(w, "secrets provider v%s — diagnostic\n\n", Version)
 
 	cfg, err := LoadConfig(ConfigPaths, os.Getenv)
 	if err != nil {
@@ -41,22 +44,62 @@ func Check(w io.Writer, path string) int {
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
-	src := newSource(cfg)
 
-	vaults, err := src.ListVaults(ctx)
-	if err != nil {
-		fmt.Fprintf(w, "FAIL connectivity: %v\n", err)
-		fmt.Fprintf(w, "     hint: %s\n", hintFor(err))
-		return 1
+	// The connectivity summary is backend-specific. The op:// provider can
+	// enumerate the visible vaults, which is the most useful scope check; AWS
+	// verifies creds/region/connectivity with a cheap DescribeParameters.
+	if cfg.OPEnabled() {
+		op := onepassword.New(onepassword.Config{
+			ServiceAccountToken: cfg.ServiceAccountToken,
+			ConnectHost:         cfg.ConnectHost,
+			Token:               cfg.Token,
+			Timeout:             cfg.Timeout,
+			Version:             Version,
+		})
+		vaults, err := op.ListVaults(ctx)
+		if err != nil {
+			fmt.Fprintf(w, "FAIL connectivity: %v\n", err)
+			fmt.Fprintf(w, "     hint: %s\n", hintFor(err))
+			return 1
+		}
+		names := make([]string, 0, len(vaults))
+		for _, v := range vaults {
+			names = append(names, v.Name)
+		}
+		sort.Strings(names)
+		fmt.Fprintf(w, "OK   connectivity: %d vault(s) visible: %s\n", len(vaults), strings.Join(names, ", "))
+		if len(vaults) == 0 {
+			fmt.Fprintf(w, "WARN no vaults are visible — the credentials are valid but not granted any vault\n")
+		}
 	}
-	names := make([]string, 0, len(vaults))
-	for _, v := range vaults {
-		names = append(names, v.Name)
-	}
-	sort.Strings(names)
-	fmt.Fprintf(w, "OK   connectivity: %d vault(s) visible: %s\n", len(vaults), strings.Join(names, ", "))
-	if len(vaults) == 0 {
-		fmt.Fprintf(w, "WARN no vaults are visible — the credentials are valid but not granted any vault\n")
+
+	if cfg.AWSEnabled() {
+		aws := awsssm.New(awsssm.Config{
+			Region:      cfg.AWSRegion,
+			Profile:     cfg.AWSProfile,
+			EndpointURL: cfg.AWSEndpointURL,
+			Decrypt:     cfg.AWSDecrypt,
+			Timeout:     cfg.Timeout,
+		})
+		if err := aws.Ping(ctx); err != nil {
+			fmt.Fprintf(w, "FAIL AWS connectivity: %v\n", err)
+			fmt.Fprintf(w, "     hint: %s\n", hintFor(err))
+			return 1
+		}
+		fmt.Fprintf(w, "OK   AWS connectivity: %s reachable\n", aws.Describe())
+
+		sm := awssm.New(awssm.Config{
+			Region:      cfg.AWSRegion,
+			Profile:     cfg.AWSProfile,
+			EndpointURL: cfg.AWSEndpointURL,
+			Timeout:     cfg.Timeout,
+		})
+		if err := sm.Ping(ctx); err != nil {
+			fmt.Fprintf(w, "FAIL AWS connectivity: %v\n", err)
+			fmt.Fprintf(w, "     hint: %s\n", hintFor(err))
+			return 1
+		}
+		fmt.Fprintf(w, "OK   AWS connectivity: %s reachable\n", sm.Describe())
 	}
 
 	if path == "" {
@@ -64,28 +107,35 @@ func Check(w io.Writer, path string) int {
 	}
 
 	fmt.Fprintf(w, "\nResolving %q (values are never printed):\n", path)
-	entries, err := opref.ParseAll(path)
+	entries, err := provider.SplitEntries(path)
 	if err != nil {
 		fmt.Fprintf(w, "FAIL parse: %v\n", err)
 		return 1
 	}
 
+	reg := newRegistry(cfg)
 	failed := false
 	for _, entry := range entries {
-		label := entry.Ref.String()
+		label := entry.Ref
 		if entry.Name != "" {
 			label = entry.Name + " = " + label
 		}
+		p, err := reg.Route(entry.Ref)
+		if err != nil {
+			failed = true
+			fmt.Fprintf(w, "FAIL %s\n     %v\n", label, err)
+			continue
+		}
 		// Resolve live, bypassing the cache, so the check reflects the
 		// backend's current state.
-		values, err := resolve(ctx, src, entry.Ref)
+		result, err := p.Resolve(ctx, entry.Ref)
 		if err != nil {
 			failed = true
 			fmt.Fprintf(w, "FAIL %s\n     %v\n     hint: %s\n", label, err, hintFor(err))
 			continue
 		}
-		keys := make([]string, 0, len(values))
-		for k := range values {
+		keys := make([]string, 0, len(result.Values))
+		for k := range result.Values {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)

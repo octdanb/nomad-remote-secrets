@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end UI test: boot a real Nomad dev agent with the onepassword plugin,
+# End-to-end UI test: boot a real Nomad dev agent with the secrets plugin,
 # deploy a long-running service job whose secrets resolve through a fake
 # 1Password Connect, then drive the Nomad web UI with Playwright to prove the
 # resolved secret values never render in the console.
@@ -33,7 +33,9 @@ fail() {
 echo "==> building and installing plugin"
 make build
 $SUDO install -d "$PLUGIN_DIR/secrets"
-$SUDO install -m 0755 bin/onepassword "$PLUGIN_DIR/secrets/onepassword"
+$SUDO install -m 0755 bin/secrets "$PLUGIN_DIR/secrets/secrets"
+# Back-compat alias: the UI job uses provider = "onepassword".
+$SUDO ln -sf secrets "$PLUGIN_DIR/secrets/onepassword"
 
 echo "==> starting fake 1Password Connect"
 go run ./e2e/fakeconnect >/tmp/nomad-ui-connect.log 2>&1 &
