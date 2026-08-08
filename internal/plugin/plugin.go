@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/octdanb/nomad-remote-secrets/internal/cache"
@@ -80,6 +81,29 @@ func newRegistry(cfg Config) *provider.Registry {
 	return reg
 }
 
+// sanitizeAWSEnv removes every AWS_* variable from this process's environment.
+//
+// Nomad merges a job's `secret { env {} }` block into the plugin process's
+// environment, and the AWS SDK's default config loader reads a large set of
+// AWS_* variables directly (endpoint, CA bundle, shared-credentials/config
+// files, container- and web-identity credential sources). Left in place, a
+// malicious job could set e.g. AWS_ENDPOINT_URL to redirect an instance-role
+// signed request to a server it controls. Everything the plugin honours has
+// already been read into Config (host file winning over the environment) and is
+// passed to the SDK explicitly; the EC2/ECS instance-role path uses IMDS and
+// needs no environment. Ambient env-based credential delivery (IRSA /
+// container credentials) is intentionally not honoured — it is indistinguishable
+// from a job-injected value. Callers must invoke this only after LoadConfig.
+func sanitizeAWSEnv() {
+	for _, kv := range os.Environ() {
+		if i := strings.IndexByte(kv, '='); i > 0 {
+			if key := kv[:i]; strings.HasPrefix(key, "AWS_") {
+				os.Unsetenv(key)
+			}
+		}
+	}
+}
+
 // fetchResponse is the JSON shape Nomad expects on stdout for fetch.
 type fetchResponse struct {
 	Result map[string]string `json:"result"`
@@ -117,6 +141,11 @@ func fetch(stderr io.Writer, path string) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	// LoadConfig has captured every setting the plugin honours (host file
+	// winning over the environment). Scrub AWS_* from the process environment
+	// now so the AWS SDK cannot be steered by a job's secret env{} block, which
+	// Nomad merges into this process's environment (see sanitizeAWSEnv).
+	sanitizeAWSEnv()
 
 	var store *cache.Cache
 	if cfg.CacheDir != "" {

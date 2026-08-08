@@ -30,6 +30,7 @@ func Check(w io.Writer, path string) int {
 		fmt.Fprintf(w, "     config files checked: %s\n", strings.Join(ConfigPaths, ", "))
 		return 1
 	}
+	sanitizeAWSEnv() // match the fetch path: SDK sees only host-file settings
 	fmt.Fprintf(w, "OK   config loaded from: %s\n", cfg.Source)
 	fmt.Fprintf(w, "OK   backend: %s\n", cfg.Describe())
 	fmt.Fprintf(w, "     request timeout %s, cache TTL %s, max stale %s\n", cfg.Timeout, cfg.CacheTTL, cfg.MaxStale)
