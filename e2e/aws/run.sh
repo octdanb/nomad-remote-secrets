@@ -55,7 +55,11 @@ $SUDO install -m 0755 bin/secrets "$PLUGIN_DIR/secrets/secrets"
 $SUDO ln -sf secrets "$PLUGIN_DIR/secrets/onepassword"
 
 echo "==> starting localstack (SSM + Secrets Manager)"
-LOCALSTACK_ID=$(docker run -d -p 4566:4566 -e SERVICES=ssm,secretsmanager localstack/localstack)
+# Pin to the v3 community image: SSM and Secrets Manager are free/community
+# emulations, but the rolling `latest` tag is now Pro-gated and exits without a
+# LOCALSTACK_AUTH_TOKEN. Override with LOCALSTACK_IMAGE if needed.
+LOCALSTACK_IMAGE=${LOCALSTACK_IMAGE:-localstack/localstack:3}
+LOCALSTACK_ID=$(docker run -d -p 4566:4566 -e SERVICES=ssm,secretsmanager "$LOCALSTACK_IMAGE")
 ready() { curl -sf "$LOCALSTACK_ENDPOINT/_localstack/health" | grep -q "\"$1\""; }
 for _ in $(seq 1 60); do
   ready ssm && ready secretsmanager && break
