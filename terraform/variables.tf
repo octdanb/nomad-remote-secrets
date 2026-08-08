@@ -121,6 +121,28 @@ variable "op_vault_name" {
   description = "1Password vault for this cluster's secrets. Defaults to <app_name>-<environment>."
 }
 
+# --- remote-secrets plugin runtime IAM (AWS backends) ----------------------
+# Grants nodes the access the remote-secrets plugin needs to resolve aws-ssm:
+# and aws-sm: references. Leave a list empty to grant nothing for that service.
+# Scope the ARNs (wildcards allowed) to the parameters/secrets your jobs use.
+variable "remote_secrets_ssm_parameter_arns" {
+  type        = list(string)
+  default     = []
+  description = "SSM Parameter Store ARNs the plugin may GetParameter (e.g. arn:aws:ssm:REGION:ACCT:parameter/prod/*)."
+}
+
+variable "remote_secrets_sm_secret_arns" {
+  type        = list(string)
+  default     = []
+  description = "Secrets Manager secret ARNs the plugin may GetSecretValue (e.g. arn:aws:secretsmanager:REGION:ACCT:secret:prod/*)."
+}
+
+variable "remote_secrets_kms_key_arns" {
+  type        = list(string)
+  default     = []
+  description = "KMS key ARNs for kms:Decrypt — required for SecureString / CMK-encrypted secrets. Omit if you only use String params and default-KMS SM secrets."
+}
+
 # --------------------------------------------------------------------- Traefik
 variable "traefik_acme_email" {
   type        = string

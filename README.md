@@ -35,10 +35,54 @@ At deploy time the Nomad client fetches the secret from the backend, caches it
 locally, and interpolates it into the task — here as an environment variable
 inside the Docker container. Secrets never appear in the job spec itself.
 
-Requires **Nomad 1.11.0+** (the release that introduced the `secret` block and
-custom secret providers). 1Password needs a service account or Connect server;
-AWS needs a region plus credentials (an instance role, or static keys in the
-host config — see below).
+## Requirements
+
+**Nomad 1.11.0+** — the release that introduced the `secret` block and custom
+secret providers. CI runs the full end-to-end suite against a version matrix;
+see [Compatibility](#compatibility). Nomad 1.10 and earlier lack the feature
+and are unsupported.
+
+**1Password** (for `op://` references) — one of:
+- A **service account** (any paid plan): create and scope it read-only to the
+  vaults your jobs use, then copy the `ops_...` token to the node:
+  ```sh
+  op service-account create nomad-<cluster> --vault "Production:read_items"
+  ```
+  Each client node needs outbound HTTPS to `1password.com`. Simplest to start;
+  subject to [service-account rate limits](https://developer.1password.com/docs/service-accounts/rate-limits/)
+  (the on-disk cache keeps fetch volume well under them).
+- **or** a self-hosted **Connect** server: deploy Connect (two containers) with
+  its `1password-credentials.json`, mint an access token
+  (`op connect token create <name> --vault Production`), and set
+  `OP_CONNECT_HOST` / `OP_CONNECT_TOKEN_FILE`. Reads are local and uncounted —
+  for high fetch volume or nodes without internet egress.
+
+You reference secrets by `op://vault/item[/section]/field`; vault and item must
+be unique names or you must use their IDs.
+
+**AWS** (for `aws-ssm:` / `aws-sm:` references):
+- An AWS account and a region (`AWS_REGION`).
+- Credentials via the **EC2/ECS instance role** (recommended) or **static keys**
+  in the host config. (Ambient IRSA/container-credential env vars are not
+  honoured — see the credential note under [AWS references](#aws-references).)
+- The IAM permissions in [AWS IAM requirements](#aws-iam-requirements)
+  (`ssm:GetParameter`, `secretsmanager:GetSecretValue`, and `kms:Decrypt` for
+  `SecureString` / customer-managed-key secrets).
+
+## Compatibility
+
+The CI `e2e` job runs the real-agent round-trip against a matrix of Nomad
+versions on every push, so the supported range is continuously verified:
+
+| Nomad | Status |
+|---|---|
+| ≤ 1.10.x | **Unsupported** — no `secret` block / secret-provider API (CI runs it allowed-to-fail to document the boundary) |
+| 1.11.0 | Supported — minimum version |
+| 1.11.x (latest) | Supported |
+| 2.0.x (latest) | Supported |
+
+The plugin speaks the stable fingerprint/fetch contract, so newer Nomad
+releases are expected to work; open an issue if a version regresses.
 
 ## How it works
 
@@ -75,10 +119,13 @@ env {                     ├─ written to on-disk cache
 > S3+CloudFront, and 1Password/SSM secret wiring. The steps below cover
 > manual installation.
 
-1. Build the binary (Go 1.24+):
+1. Build the binary (Go 1.24+). Nomad clients are Linux, so build for Linux —
+   `make build` targets your current OS, `make release` cross-builds Linux
+   amd64/arm64:
 
    ```sh
-   make build            # → bin/remote-secrets
+   make build            # → bin/remote-secrets (current platform)
+   make release          # → bin/remote-secrets_linux_{amd64,arm64}
    ```
 
 2. Install it on **every Nomad client node** as
@@ -235,9 +282,10 @@ secret scoped to the one task that needs it.
 
 ## AWS references
 
-Both AWS backends need only `AWS_REGION` (plus optional `AWS_ENDPOINT_URL`)
-in the host config; credentials come from the AWS SDK default chain (see
-[Installation](#installation), step 4). The scheme selects the service:
+Both AWS backends need `AWS_REGION` (plus optional `AWS_ENDPOINT_URL`) in the
+host config; credentials come from the EC2/ECS instance role, static keys, or a
+profile in the host config (see [Installation](#installation) step 4 and the
+credential note below). The scheme selects the service:
 
 | Reference | Resolves to |
 |---|---|
@@ -275,6 +323,63 @@ The multi-entry syntax, JSON auto-expansion, fail-closed behavior, and
 per-reference caching described under
 [Multiple secrets in one block](#multiple-secrets-in-one-block) apply to every
 scheme, and a single block may mix `op://`, `aws-ssm:`, and `aws-sm:` entries.
+
+Per-reference options (append `?k=v`):
+
+| Option | Scheme | Effect |
+|---|---|---|
+| `?raw=true` | `aws-ssm:`, `aws-sm:` | Do not auto-expand JSON; expose only `value` |
+| `?decrypt=false` | `aws-ssm:` | Return the raw `SecureString` ciphertext (skip `WithDecryption`) |
+| `?version=<id>` | `aws-sm:` | Fetch a specific `VersionId` |
+| `?stage=<label>` | `aws-sm:` | Fetch a `VersionStage` (e.g. `AWSPREVIOUS`) |
+| `?binary=true` | `aws-sm:` | Treat as binary even if `SecretString` is set (→ `value_base64`) |
+
+### AWS IAM requirements
+
+The identity the plugin runs as (EC2 instance role, or the static keys in the
+host config) needs, scoped to the parameters/secrets your jobs reference:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    { "Sid": "RemoteSecretsSSM",
+      "Effect": "Allow",
+      "Action": ["ssm:GetParameter"],
+      "Resource": "arn:aws:ssm:REGION:ACCOUNT:parameter/prod/*" },
+    { "Sid": "RemoteSecretsSecretsManager",
+      "Effect": "Allow",
+      "Action": ["secretsmanager:GetSecretValue"],
+      "Resource": "arn:aws:secretsmanager:REGION:ACCOUNT:secret:prod/*" },
+    { "Sid": "RemoteSecretsKMSDecrypt",
+      "Effect": "Allow",
+      "Action": ["kms:Decrypt"],
+      "Resource": "arn:aws:kms:REGION:ACCOUNT:key/KMS_KEY_ID" },
+    { "Sid": "RemoteSecretsCheckDiagnostic",
+      "Effect": "Allow",
+      "Action": ["ssm:DescribeParameters", "secretsmanager:ListSecrets"],
+      "Resource": "*" }
+  ]
+}
+```
+
+- Grant only the services you use — drop the SSM or Secrets Manager statement
+  if unused.
+- `kms:Decrypt` is required only for SSM `SecureString` values and for Secrets
+  Manager secrets encrypted with a **customer-managed** KMS key. Secrets under
+  the default AWS-managed key are covered by `secretsmanager:GetSecretValue`.
+- The `RemoteSecretsCheckDiagnostic` list actions can't be resource-scoped;
+  they back `remote-secrets check` connectivity verification. Omit them if you
+  don't rely on `check` (fetches don't need them).
+- The Terraform stack wires these via `remote_secrets_ssm_parameter_arns`,
+  `remote_secrets_sm_secret_arns`, and `remote_secrets_kms_key_arns`.
+
+> **Credential sources.** The plugin uses static keys from the host config, an
+> explicit `AWS_PROFILE`, or the **EC2/ECS instance role via IMDS**. For
+> security it does **not** honour ambient environment-based credentials
+> (IRSA `AWS_WEB_IDENTITY_TOKEN_FILE`, ECS `AWS_CONTAINER_CREDENTIALS_*`): the
+> plugin scrubs `AWS_*` from its environment so a job's `secret env{}` block
+> can't redirect the SDK. Use an instance role or static keys in the host file.
 
 ## File-like secrets
 
@@ -478,6 +583,23 @@ Warnings that don't fail a fetch (stale cache served during an outage,
 unwritable cache directory) go to the plugin's stderr, which lands in the
 **Nomad client agent logs** on that node.
 
+### Nomad can't find the plugin
+
+If `nomad node status -verbose <node> | grep remote-secrets` returns nothing:
+
+- **Wrong path** — the binary must be at `<common_plugin_dir>/secrets/remote-secrets`.
+  The `secrets/` subdirectory is required (it's Nomad's secrets-plugin type dir).
+- **Not executable** — `chmod 0755` the binary.
+- **`common_plugin_dir` unset** — set it in the client stanza (step 3) and make
+  sure the agent actually loaded that config.
+- **Not rescanned** — Nomad only scans the plugin dir at agent **start or
+  SIGHUP**. After installing/updating the binary, `systemctl reload nomad` (or
+  restart). A change to `/etc/remote-secrets/config.env` needs **no** restart —
+  the plugin is exec'd per fetch and reads config fresh.
+- **Nomad too old** — the feature requires 1.11.0+ (see [Compatibility](#compatibility)).
+- **SELinux/AppArmor** — on enforcing hosts, ensure the plugin binary and
+  `/var/cache/remote-secrets` carry the right contexts (e.g. `restorecon`).
+
 ## Security notes
 
 - The plugin runs as the Nomad agent user (typically root). Tokens and the
@@ -487,6 +609,13 @@ unwritable cache directory) go to the plugin's stderr, which lands in the
   step in your image pipeline beats long-lived credentials.
 - Secret values never appear in job specs, in Nomad server state, or in
   plugin logs — only in the task's resolved environment.
+- Credentials and endpoints come only from the host config file (or the agent
+  environment for keys it leaves unset) — never from the job. Nomad merges a
+  job's `secret { env {} }` into the plugin's environment, so the plugin reads
+  the host file with precedence and **scrubs all `AWS_*` variables** before the
+  AWS SDK runs, preventing a job from redirecting the SDK (e.g. via
+  `AWS_ENDPOINT_URL`) to capture instance-role-signed requests. Ship the host
+  config file on production nodes.
 - Prefer `OP_CONNECT_TOKEN_FILE` over inline `OP_CONNECT_TOKEN`, and scope
   the Connect token to only the vaults your jobs need.
 - Anyone who can submit jobs to a client can read any secret the node's
@@ -518,8 +647,10 @@ export OP_CONNECT_TOKEN=eyJ...
 ## Limitations
 
 - Supported query attributes are `?attribute=otp`, `?attribute=file`,
-  `?encoding=base64` (1Password) and `?binary`, `?encoding=base64`
-  (Secrets Manager); see [File-like secrets](#file-like-secrets).
+  `?encoding=base64` (1Password); `?raw`, `?decrypt` (Parameter Store); and
+  `?raw`, `?binary`, `?encoding=base64`, `?version`, `?stage` (Secrets
+  Manager). See [AWS references](#aws-references) and
+  [File-like secrets](#file-like-secrets).
 - The `env {}` block in a `secret` stanza does not support Nomad variable
   interpolation (values arrive as literal strings — a
   [known Nomad limitation](https://github.com/hashicorp/nomad/issues/27569)).
