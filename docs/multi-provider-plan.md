@@ -74,15 +74,14 @@ Returned keys for a file reference:
 | `value_base64` | base64 of raw bytes — always safe, required for binary |
 | `filename` | original filename metadata |
 
-Job pattern (materialize into tmpfs `secrets/`, never `local/` or env for large blobs):
+Job pattern (materialize into tmpfs `$NOMAD_SECRETS_DIR`). Nomad interpolates
+`${secret...}` into `env {}` but not into `template.data`, so expose the value
+as an env var and decode it in the task:
 
 ```hcl
 secret "cert" { provider = "remote-secrets"  path = "aws-sm:prod/tls/bundle" }
-template {
-  data        = "{{ \"${secret.cert.value_base64}\" | base64Decode }}"
-  destination = "secrets/bundle.p12"
-  perms       = "0400"
-}
+env { CERT_B64 = "${secret.cert.value_base64}" }
+# task command: echo "$CERT_B64" | base64 -d > "$NOMAD_SECRETS_DIR/bundle.p12"
 ```
 
 Reference syntax:
