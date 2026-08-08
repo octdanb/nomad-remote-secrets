@@ -3,9 +3,9 @@
 A [Nomad secret provider plugin](https://developer.hashicorp.com/nomad/plugins/author/secret-provider)
 that resolves secret references from multiple backends so job specs can pull
 secrets at deploy time without running HashiCorp Vault. It is a **single
-scheme-routed binary** named `secrets`: jobs always say `provider = "remote-secrets"`,
-and the **reference scheme** selects the backend at fetch time — so one
-`secret` block may mix providers.
+scheme-routed binary** named `remote-secrets`: jobs always say
+`provider = "remote-secrets"`, and the **reference scheme** selects the backend
+at fetch time — so one `secret` block may mix providers.
 
 | Provider | Scheme | Example |
 |---|---|---|
@@ -37,7 +37,8 @@ inside the Docker container. Secrets never appear in the job spec itself.
 
 Requires **Nomad 1.11.0+** (the release that introduced the `secret` block and
 custom secret providers). 1Password needs a service account or Connect server;
-AWS needs credentials via the SDK default chain (see below).
+AWS needs a region plus credentials (an instance role, or static keys in the
+host config — see below).
 
 ## How it works
 
@@ -146,10 +147,19 @@ env {                     ├─ written to on-disk cache
    Backends coexist: configure any subset. Each reference's scheme picks the
    backend, so a single node can serve `op://`, `aws-ssm:`, and `aws-sm:`.
 
-5. Restart (or SIGHUP) the Nomad client and confirm registration:
+5. Verify the node's config, backend connectivity, and credential scope
+   *before* restarting Nomad — this catches a bad token or region without a
+   failed deploy (see [Debugging](#debugging)):
 
    ```sh
-   nomad node status -verbose $(nomad node status -quiet -self) | grep secrets
+   /opt/nomad/plugins/secrets/remote-secrets check
+   ```
+
+6. Restart (or SIGHUP) the Nomad client so it discovers the plugin, then
+   confirm it registered:
+
+   ```sh
+   nomad node status -verbose $(nomad node status -quiet -self) | grep remote-secrets
    ```
 
 ## Secret references
@@ -352,14 +362,22 @@ Settings come from (highest precedence first):
 | `OP_CACHE_TTL` | `5m` | Serve cached values this long without re-fetching; `0` disables |
 | `OP_CACHE_MAX_STALE` | `24h` | On Connect outage, serve values up to this old; `0` disables |
 | `OP_CACHE_DIR` | `/var/cache/remote-secrets` | Cache location |
-| `OP_REQUEST_TIMEOUT` | `30s` | Per-fetch Connect timeout (Nomad kills fetches at 60s) |
+| `OP_REQUEST_TIMEOUT` | `30s` | Per-fetch backend timeout (Nomad kills fetches at 60s) |
+| `AWS_REGION` | — | AWS region; setting it (or `AWS_ENDPOINT_URL`) enables the AWS backends |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | — | Static AWS credentials (otherwise the SDK default chain / instance role is used) |
+| `AWS_SESSION_TOKEN` | — | Session token for temporary AWS credentials |
+| `AWS_PROFILE` | — | Shared-config profile to select instead of static keys |
+| `AWS_ENDPOINT_URL` | — | Override the AWS endpoint (localstack, VPC/PrivateLink) |
+| `AWS_SSM_DECRYPT` | `true` | Decrypt SSM `SecureString` values (`WithDecryption`) |
 | `SECRET_MAX_FILE_BYTES` | `1048576` | Max raw byte length of a file-like secret; larger is rejected. `0` disables |
 
-Durations accept Go syntax (`5m`, `90s`) or bare seconds (`300`).
+Durations accept Go syntax (`5m`, `90s`) or bare seconds (`300`). The `OP_*`
+cache/timeout keys apply to every backend (the prefix is historical).
 
-Backend selection: if a service account token is configured, it is used and
-any Connect settings are ignored; otherwise Connect requires both
-`OP_CONNECT_HOST` and a token. Exactly one backend serves each fetch.
+Backend selection is per-reference by scheme, and backends coexist. A backend
+is *enabled* when configured: 1Password by a service account token (which wins)
+or a Connect host+token; AWS by `AWS_REGION` or `AWS_ENDPOINT_URL`. At least
+one must be configured or the plugin errors at startup.
 
 ### Choosing a backend
 
@@ -494,7 +512,7 @@ the standard library only; the AWS backends pull in `aws-sdk-go-v2`.
 export OP_CONNECT_HOST=http://127.0.0.1:8080
 export OP_CONNECT_TOKEN=eyJ...
 ./bin/remote-secrets fingerprint
-./bin/remote-remote-secrets fetch "op://Production/database/password"
+./bin/remote-secrets fetch "op://Production/database/password"
 ```
 
 ## Limitations
