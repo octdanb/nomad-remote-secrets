@@ -10,6 +10,7 @@ import (
 
 	"github.com/octdanb/nomad-secret-plugin/internal/cache"
 	"github.com/octdanb/nomad-secret-plugin/internal/provider"
+	"github.com/octdanb/nomad-secret-plugin/internal/provider/awssm"
 	"github.com/octdanb/nomad-secret-plugin/internal/provider/awsssm"
 	"github.com/octdanb/nomad-secret-plugin/internal/provider/onepassword"
 )
@@ -86,6 +87,19 @@ func Check(w io.Writer, path string) int {
 			return 1
 		}
 		fmt.Fprintf(w, "OK   AWS connectivity: %s reachable\n", aws.Describe())
+
+		sm := awssm.New(awssm.Config{
+			Region:      cfg.AWSRegion,
+			Profile:     cfg.AWSProfile,
+			EndpointURL: cfg.AWSEndpointURL,
+			Timeout:     cfg.Timeout,
+		})
+		if err := sm.Ping(ctx); err != nil {
+			fmt.Fprintf(w, "FAIL AWS connectivity: %v\n", err)
+			fmt.Fprintf(w, "     hint: %s\n", hintFor(err))
+			return 1
+		}
+		fmt.Fprintf(w, "OK   AWS connectivity: %s reachable\n", sm.Describe())
 	}
 
 	if path == "" {

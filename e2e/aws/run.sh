@@ -38,23 +38,42 @@ aws_ssm() {
   fi
 }
 
+aws_sm() {
+  if command -v awslocal >/dev/null 2>&1; then
+    awslocal secretsmanager "$@"
+  else
+    AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1 \
+      aws --endpoint-url "$LOCALSTACK_ENDPOINT" secretsmanager "$@"
+  fi
+}
+
 echo "==> building and installing plugin"
 make build
 $SUDO install -d "$PLUGIN_DIR/secrets"
 $SUDO install -m 0755 bin/onepassword "$PLUGIN_DIR/secrets/secrets"
 
-echo "==> starting localstack (SSM)"
-LOCALSTACK_ID=$(docker run -d -p 4566:4566 -e SERVICES=ssm localstack/localstack)
+echo "==> starting localstack (SSM + Secrets Manager)"
+LOCALSTACK_ID=$(docker run -d -p 4566:4566 -e SERVICES=ssm,secretsmanager localstack/localstack)
+ready() { curl -sf "$LOCALSTACK_ENDPOINT/_localstack/health" | grep -q "\"$1\""; }
 for _ in $(seq 1 60); do
-  curl -sf "$LOCALSTACK_ENDPOINT/_localstack/health" | grep -q '"ssm"' && break
+  ready ssm && ready secretsmanager && break
   sleep 1
 done
-curl -sf "$LOCALSTACK_ENDPOINT/_localstack/health" | grep -q '"ssm"' || fail "localstack SSM never became available"
+ready ssm || fail "localstack SSM never became available"
+ready secretsmanager || fail "localstack Secrets Manager never became available"
 
 echo "==> seeding parameters"
 aws_ssm put-parameter --name /prod/db/password --type SecureString --value 'hunter2-aws' --overwrite
 aws_ssm put-parameter --name /prod/db/creds --type String \
   --value '{"username":"app-user","password":"json-pass-aws"}' --overwrite
+
+echo "==> seeding secrets manager secrets"
+aws_sm create-secret --name prod/sm/plain --secret-string 'sm-plain-aws' \
+  || aws_sm put-secret-value --secret-id prod/sm/plain --secret-string 'sm-plain-aws'
+aws_sm create-secret --name prod/sm/creds \
+  --secret-string '{"username":"sm-user","password":"sm-json-pass"}' \
+  || aws_sm put-secret-value --secret-id prod/sm/creds \
+    --secret-string '{"username":"sm-user","password":"sm-json-pass"}'
 
 echo "==> configuring AWS backend (localstack + dummy creds)"
 $SUDO install -d -m 0700 /etc/nomad-secret-onepassword
@@ -108,7 +127,8 @@ fi
 
 logs=$("$NOMAD_BIN" alloc logs "$alloc" print)
 echo "task output: $logs"
-for want in "PW=hunter2-aws" "USER=app-user" "CPW=json-pass-aws"; do
+for want in "PW=hunter2-aws" "USER=app-user" "CPW=json-pass-aws" \
+            "SMPW=sm-plain-aws" "SMUSER=sm-user" "SMCPW=sm-json-pass"; do
   case "$logs" in
     *"$want"*) echo "OK   found $want" ;;
     *) fail "missing '$want' in task output" ;;

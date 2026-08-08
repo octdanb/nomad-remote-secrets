@@ -17,6 +17,7 @@ import (
 
 	"github.com/octdanb/nomad-secret-plugin/internal/cache"
 	"github.com/octdanb/nomad-secret-plugin/internal/provider"
+	"github.com/octdanb/nomad-secret-plugin/internal/provider/awssm"
 	"github.com/octdanb/nomad-secret-plugin/internal/provider/awsssm"
 	"github.com/octdanb/nomad-secret-plugin/internal/provider/onepassword"
 )
@@ -52,11 +53,19 @@ func newRegistry(cfg Config) *provider.Registry {
 		}))
 	}
 	if cfg.AWSEnabled() {
+		// Parameter Store and Secrets Manager share the same AWS enablement
+		// (region or endpoint) and coexist under different schemes.
 		reg.Register(awsssm.Scheme, awsssm.New(awsssm.Config{
 			Region:      cfg.AWSRegion,
 			Profile:     cfg.AWSProfile,
 			EndpointURL: cfg.AWSEndpointURL,
 			Decrypt:     cfg.AWSDecrypt,
+			Timeout:     cfg.Timeout,
+		}))
+		reg.Register(awssm.Scheme, awssm.New(awssm.Config{
+			Region:      cfg.AWSRegion,
+			Profile:     cfg.AWSProfile,
+			EndpointURL: cfg.AWSEndpointURL,
 			Timeout:     cfg.Timeout,
 		}))
 	}
