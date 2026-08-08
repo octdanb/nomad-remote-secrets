@@ -136,15 +136,20 @@ env {                     ├─ written to on-disk cache
    EOF
    ```
 
-   **AWS** (Parameter Store / Secrets Manager) — set the region and let the
+   **AWS** (Parameter Store / Secrets Manager) — set the region. On EC2/ECS the
    [AWS SDK default credential chain](https://docs.aws.amazon.com/sdkref/latest/guide/standardized-credentials.html)
-   supply credentials (instance profile / IRSA on EC2/ECS, or
-   `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, or `~/.aws`):
+   picks up the instance profile / IRSA automatically. Off an instance role
+   (or under Nomad's controlled plugin environment), pin static credentials in
+   the host config so the SDK doesn't stall probing instance metadata:
 
    ```sh
    cat > /etc/nomad-secret-onepassword/config.env <<'EOF'
    AWS_REGION=ap-southeast-2
    # AWS_ENDPOINT_URL=http://127.0.0.1:4566   # optional: localstack / VPC endpoint
+   # Optional static credentials (otherwise the SDK default chain is used):
+   # AWS_ACCESS_KEY_ID=AKIA...
+   # AWS_SECRET_ACCESS_KEY=...
+   # AWS_SESSION_TOKEN=...                     # optional, for temporary creds
    EOF
    ```
 
