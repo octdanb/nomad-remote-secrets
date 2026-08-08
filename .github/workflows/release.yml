@@ -1,0 +1,46 @@
+name: Release
+
+# Publishes compiled plugin binaries as GitHub Release assets. Trigger by
+# pushing a semver tag that matches the plugin Version, e.g.:
+#
+#   git tag v0.4.0 && git push origin v0.4.0
+#
+# Produces onepassword_linux_amd64, onepassword_linux_arm64, and a
+# SHA256SUMS file that Ansible can pin against with `checksum:`.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build linux binaries
+        run: make release
+
+      - name: Checksums
+        working-directory: bin
+        run: sha256sum onepassword_linux_amd64 onepassword_linux_arm64 > SHA256SUMS
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            bin/onepassword_linux_amd64
+            bin/onepassword_linux_arm64
+            bin/SHA256SUMS
+          generate_release_notes: true
+          fail_on_unmatched_files: true
