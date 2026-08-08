@@ -11,7 +11,8 @@ permissions:
 env:
   # Nomad version used by the single-version e2e jobs (AWS, UI, real-1Password).
   # The `e2e` job below sweeps a matrix to establish the supported range.
-  NOMAD_DEFAULT: "1.11.8"
+  # Must be a pure-OSS release (…/nomad/<v>/…): 1.11.7+ exist only as +ent.
+  NOMAD_DEFAULT: "1.11.3"
 
 jobs:
   test:
@@ -46,11 +47,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { nomad: "1.10.14", required: false } # unsupported: no secret provider
+          - { nomad: "1.10.5", required: false } # unsupported: no secret provider (latest 1.10 OSS)
           - { nomad: "1.11.0", required: true } # minimum supported
-          - { nomad: "1.11.8", required: true } # latest 1.11.x
-          - { nomad: "2.0.4", required: true } # latest major
-    name: e2e (nomad ${{ matrix.nomad }}${{ matrix.required && '' || ', unsupported' }})
+          - { nomad: "1.11.3", required: true } # latest 1.11.x OSS
+          - { nomad: "2.0.4", required: true } # latest major OSS
+    name: e2e (nomad ${{ matrix.nomad }}${{ !matrix.required && ' (unsupported)' || '' }})
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

@@ -35,6 +35,19 @@ job "e2e-secrets" {
         EOF
       }
 
+      # A file-like secret: a 1Password Document item materialized into tmpfs
+      # secrets/ via a template block (the plugin never writes files itself).
+      secret "doc" {
+        provider = "remote-secrets"
+        path     = "welcome = op://Testing/welcome"
+      }
+
+      template {
+        data        = "{{ \"${secret.doc.welcome_value_base64}\" | base64Decode }}"
+        destination = "secrets/welcome.txt"
+        perms       = "0400"
+      }
+
       env {
         DB_PASSWORD  = "${secret.db.value}"
         APP_PW       = "${secret.app.pw}"
@@ -46,7 +59,7 @@ job "e2e-secrets" {
       config {
         image        = "alpine:3.20"
         network_mode = "none"
-        args         = ["sh", "-c", "echo \"PW=$${DB_PASSWORD} APP_PW=$${APP_PW} REP=$${APP_REPLICA} USER=$${APP_USER} HOST=$${APP_DB_HOST}\""]
+        args         = ["sh", "-c", "echo \"PW=$${DB_PASSWORD} APP_PW=$${APP_PW} REP=$${APP_REPLICA} USER=$${APP_USER} HOST=$${APP_DB_HOST} DOC=$(cat $${NOMAD_SECRETS_DIR}/welcome.txt)\""]
       }
     }
   }
