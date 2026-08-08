@@ -123,6 +123,50 @@ func TestMissingHostAndToken(t *testing.T) {
 	}
 }
 
+func TestAWSOnlyConfigIsValid(t *testing.T) {
+	cfg, err := LoadConfig(nil, envMap(map[string]string{
+		"AWS_REGION": "us-east-1",
+	}))
+	if err != nil {
+		t.Fatalf("AWS-only config should be valid: %v", err)
+	}
+	if !cfg.AWSEnabled() || cfg.OPEnabled() {
+		t.Errorf("AWSEnabled=%v OPEnabled=%v", cfg.AWSEnabled(), cfg.OPEnabled())
+	}
+	if !cfg.AWSDecrypt {
+		t.Error("AWSDecrypt should default to true")
+	}
+}
+
+func TestAWSEndpointOnlyIsValid(t *testing.T) {
+	cfg, err := LoadConfig(nil, envMap(map[string]string{
+		"AWS_ENDPOINT_URL": "http://localhost:4566/",
+		"AWS_SSM_DECRYPT":  "false",
+	}))
+	if err != nil {
+		t.Fatalf("AWS endpoint-only config should be valid: %v", err)
+	}
+	if cfg.AWSEndpointURL != "http://localhost:4566" {
+		t.Errorf("endpoint = %q, want trailing slash trimmed", cfg.AWSEndpointURL)
+	}
+	if cfg.AWSDecrypt {
+		t.Error("AWS_SSM_DECRYPT=false should disable decryption")
+	}
+}
+
+func TestOPOnlyStillValid(t *testing.T) {
+	cfg, err := LoadConfig(nil, envMap(map[string]string{
+		"OP_CONNECT_HOST":  "http://x",
+		"OP_CONNECT_TOKEN": "t",
+	}))
+	if err != nil {
+		t.Fatalf("OP-only config should be valid: %v", err)
+	}
+	if !cfg.OPEnabled() || cfg.AWSEnabled() {
+		t.Errorf("OPEnabled=%v AWSEnabled=%v", cfg.OPEnabled(), cfg.AWSEnabled())
+	}
+}
+
 func TestDurationSettings(t *testing.T) {
 	base := map[string]string{
 		"OP_CONNECT_HOST":  "http://x",

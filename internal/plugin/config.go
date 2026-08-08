@@ -27,19 +27,52 @@ type Config struct {
 	CacheTTL            time.Duration // OP_CACHE_TTL (default 5m, 0 disables)
 	MaxStale            time.Duration // OP_CACHE_MAX_STALE (default 24h, 0 disables fallback)
 
+	// AWS Parameter Store backend fields, used to build the aws-ssm:
+	// provider. AWS is enabled when a region or endpoint is set.
+	AWSRegion      string // AWS_REGION
+	AWSProfile     string // AWS_PROFILE
+	AWSEndpointURL string // AWS_ENDPOINT_URL (e.g. localstack)
+	AWSDecrypt     bool   // AWS_SSM_DECRYPT (default true)
+
 	// Source records where the settings came from — the loaded config
 	// file path, or "agent environment" — so error messages can point
 	// operators at the right place.
 	Source string
 }
 
-// Describe names the active backend for error messages and diagnostics.
+// OPEnabled reports whether a complete 1Password backend is configured: a
+// service account token, or a Connect host paired with a token.
+func (c Config) OPEnabled() bool {
+	return c.ServiceAccountToken != "" || (c.ConnectHost != "" && c.Token != "")
+}
+
+// AWSEnabled reports whether the AWS Parameter Store backend is configured. A
+// region or a custom endpoint (localstack) is enough — credentials come from
+// the SDK's default chain.
+func (c Config) AWSEnabled() bool {
+	return c.AWSRegion != "" || c.AWSEndpointURL != ""
+}
+
+// Describe names the active backend(s) for error messages and diagnostics.
 // Tokens are never included.
 func (c Config) Describe() string {
+	var parts []string
 	if c.ServiceAccountToken != "" {
-		return "1Password service account"
+		parts = append(parts, "1Password service account")
+	} else if c.ConnectHost != "" {
+		parts = append(parts, "1Password Connect at "+c.ConnectHost)
 	}
-	return "1Password Connect at " + c.ConnectHost
+	if c.AWSEnabled() {
+		if c.AWSEndpointURL != "" {
+			parts = append(parts, "AWS Parameter Store at "+c.AWSEndpointURL)
+		} else {
+			parts = append(parts, "AWS Parameter Store (region "+c.AWSRegion+")")
+		}
+	}
+	if len(parts) == 0 {
+		return "no backend configured"
+	}
+	return strings.Join(parts, ", ")
 }
 
 // LoadConfig builds the fetch configuration from an optional host config
@@ -91,15 +124,29 @@ func LoadConfig(paths []string, getenv func(string) string) (Config, error) {
 		return Config{}, err
 	}
 
-	// Backend selection: a service account token alone is a complete
-	// configuration; otherwise Connect needs both a host and a token.
-	if cfg.ServiceAccountToken == "" {
-		if cfg.ConnectHost == "" {
-			return Config{}, fmt.Errorf("no 1Password backend configured: set OP_SERVICE_ACCOUNT_TOKEN (service account) or OP_CONNECT_HOST and OP_CONNECT_TOKEN (Connect server) in %s or in the Nomad agent environment", ConfigPaths[0])
-		}
-		if cfg.Token == "" {
-			return Config{}, fmt.Errorf("no Connect token: set OP_CONNECT_TOKEN or OP_CONNECT_TOKEN_FILE in %s or in the Nomad agent environment", ConfigPaths[0])
-		}
+	// AWS Parameter Store settings. AWS is enabled when a region or a custom
+	// endpoint is set; credentials are resolved by the SDK's default chain.
+	cfg.AWSRegion = lookup("AWS_REGION")
+	cfg.AWSProfile = lookup("AWS_PROFILE")
+	cfg.AWSEndpointURL = strings.TrimRight(lookup("AWS_ENDPOINT_URL"), "/")
+	cfg.AWSDecrypt = true
+	if v := lookup("AWS_SSM_DECRYPT"); v != "" {
+		cfg.AWSDecrypt = v != "false"
+	}
+
+	// Backend selection. A partially configured 1Password backend keeps its
+	// specific error so operators aren't left guessing. Only when nothing at
+	// all is configured do we surface the generic message — which still names
+	// OP_CONNECT_HOST (and now AWS_REGION) so both paths are discoverable.
+	switch {
+	case cfg.ServiceAccountToken != "":
+		// complete 1Password service-account backend
+	case cfg.ConnectHost != "" && cfg.Token == "":
+		return Config{}, fmt.Errorf("no Connect token: set OP_CONNECT_TOKEN or OP_CONNECT_TOKEN_FILE in %s or in the Nomad agent environment", ConfigPaths[0])
+	case cfg.OPEnabled() || cfg.AWSEnabled():
+		// complete 1Password Connect and/or AWS backend
+	default:
+		return Config{}, fmt.Errorf("no secret backend configured: set OP_SERVICE_ACCOUNT_TOKEN or OP_CONNECT_HOST and OP_CONNECT_TOKEN (1Password), or AWS_REGION / AWS_ENDPOINT_URL (AWS Parameter Store), in %s or in the Nomad agent environment", ConfigPaths[0])
 	}
 
 	if cfg.Timeout, err = durationSetting(lookup, "OP_REQUEST_TIMEOUT", cfg.Timeout); err != nil {

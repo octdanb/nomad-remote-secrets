@@ -17,6 +17,7 @@ import (
 
 	"github.com/octdanb/nomad-secret-plugin/internal/cache"
 	"github.com/octdanb/nomad-secret-plugin/internal/provider"
+	"github.com/octdanb/nomad-secret-plugin/internal/provider/awsssm"
 	"github.com/octdanb/nomad-secret-plugin/internal/provider/onepassword"
 )
 
@@ -35,17 +36,30 @@ var ConfigPaths = []string{
 }
 
 // newRegistry builds the provider registry from the loaded configuration.
-// Only the op:// provider is registered today; additional schemes slot in
-// later without touching the fetch loop.
+// Each provider is registered only when its backend is configured, so a
+// single-backend cluster keeps the scheme-less fallback (Route resolves a
+// bare reference to the sole provider) and a dual-backend cluster correctly
+// requires every reference to name its scheme.
 func newRegistry(cfg Config) *provider.Registry {
 	reg := provider.NewRegistry()
-	reg.Register(onepassword.Scheme, onepassword.New(onepassword.Config{
-		ServiceAccountToken: cfg.ServiceAccountToken,
-		ConnectHost:         cfg.ConnectHost,
-		Token:               cfg.Token,
-		Timeout:             cfg.Timeout,
-		Version:             Version,
-	}))
+	if cfg.OPEnabled() {
+		reg.Register(onepassword.Scheme, onepassword.New(onepassword.Config{
+			ServiceAccountToken: cfg.ServiceAccountToken,
+			ConnectHost:         cfg.ConnectHost,
+			Token:               cfg.Token,
+			Timeout:             cfg.Timeout,
+			Version:             Version,
+		}))
+	}
+	if cfg.AWSEnabled() {
+		reg.Register(awsssm.Scheme, awsssm.New(awsssm.Config{
+			Region:      cfg.AWSRegion,
+			Profile:     cfg.AWSProfile,
+			EndpointURL: cfg.AWSEndpointURL,
+			Decrypt:     cfg.AWSDecrypt,
+			Timeout:     cfg.Timeout,
+		}))
+	}
 	return reg
 }
 
