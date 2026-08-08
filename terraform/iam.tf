@@ -40,6 +40,47 @@ data "aws_iam_policy_document" "node" {
     actions   = ["ssm:GetParameter"]
     resources = [data.aws_ssm_parameter.op_token_meta.arn]
   }
+
+  # remote-secrets plugin runtime access for aws-ssm: / aws-sm: references.
+  # Each block appears only when its var list is non-empty.
+  dynamic "statement" {
+    for_each = length(var.remote_secrets_ssm_parameter_arns) > 0 ? [1] : []
+    content {
+      sid       = "RemoteSecretsSSM"
+      actions   = ["ssm:GetParameter", "ssm:GetParameters"]
+      resources = var.remote_secrets_ssm_parameter_arns
+    }
+  }
+
+  dynamic "statement" {
+    for_each = length(var.remote_secrets_sm_secret_arns) > 0 ? [1] : []
+    content {
+      sid       = "RemoteSecretsSecretsManager"
+      actions   = ["secretsmanager:GetSecretValue"]
+      resources = var.remote_secrets_sm_secret_arns
+    }
+  }
+
+  dynamic "statement" {
+    for_each = length(var.remote_secrets_kms_key_arns) > 0 ? [1] : []
+    content {
+      sid       = "RemoteSecretsKMSDecrypt"
+      actions   = ["kms:Decrypt"]
+      resources = var.remote_secrets_kms_key_arns
+    }
+  }
+
+  # `remote-secrets check` lists parameters/secrets to verify connectivity;
+  # these list actions can't be resource-scoped. Granted only when a backend
+  # is in use.
+  dynamic "statement" {
+    for_each = (length(var.remote_secrets_ssm_parameter_arns) > 0 || length(var.remote_secrets_sm_secret_arns) > 0) ? [1] : []
+    content {
+      sid       = "RemoteSecretsCheckDiagnostic"
+      actions   = ["ssm:DescribeParameters", "secretsmanager:ListSecrets"]
+      resources = ["*"]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "node" {
