@@ -35,17 +35,12 @@ job "e2e-secrets" {
         EOF
       }
 
-      # A file-like secret: a 1Password Document item materialized into tmpfs
-      # secrets/ via a template block (the plugin never writes files itself).
+      # A file-like secret: a 1Password Document item. Its base64 is exposed as
+      # an env var and the task decodes it into tmpfs secrets/ — env
+      # interpolation of ${secret...} works; template.data interpolation does not.
       secret "doc" {
         provider = "remote-secrets"
         path     = "welcome = op://Testing/welcome"
-      }
-
-      template {
-        data        = "{{ \"${secret.doc.welcome_value_base64}\" | base64Decode }}"
-        destination = "secrets/welcome.txt"
-        perms       = "0400"
       }
 
       env {
@@ -54,12 +49,13 @@ job "e2e-secrets" {
         APP_REPLICA  = "${secret.app.rep}"
         APP_USER     = "${secret.app.db_username}"
         APP_DB_HOST  = "${secret.app.db_host_name}"
+        DOC_B64      = "${secret.doc.welcome_value_base64}"
       }
 
       config {
         image        = "alpine:3.20"
         network_mode = "none"
-        args         = ["sh", "-c", "echo \"PW=$${DB_PASSWORD} APP_PW=$${APP_PW} REP=$${APP_REPLICA} USER=$${APP_USER} HOST=$${APP_DB_HOST} DOC=$(cat $${NOMAD_SECRETS_DIR}/welcome.txt)\""]
+        args         = ["sh", "-c", "echo \"$${DOC_B64}\" | base64 -d > $${NOMAD_SECRETS_DIR}/welcome.txt; echo \"PW=$${DB_PASSWORD} APP_PW=$${APP_PW} REP=$${APP_REPLICA} USER=$${APP_USER} HOST=$${APP_DB_HOST} DOC=$(cat $${NOMAD_SECRETS_DIR}/welcome.txt)\""]
       }
     }
   }

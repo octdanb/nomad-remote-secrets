@@ -76,13 +76,13 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Install Nomad and awscli
+      - name: Install Nomad
         run: |
           curl -fsSL -o /tmp/nomad.zip \
             "https://releases.hashicorp.com/nomad/${NOMAD_DEFAULT}/nomad_${NOMAD_DEFAULT}_linux_amd64.zip"
           sudo unzip -o /tmp/nomad.zip -d /usr/local/bin
-          sudo apt-get update && sudo apt-get install -y awscli
           nomad --version
+          aws --version   # AWS CLI v2 is preinstalled on the runner
       - name: Run aws e2e (localstack SSM + Secrets Manager, docker driver)
         run: ./e2e/aws/run.sh
 
