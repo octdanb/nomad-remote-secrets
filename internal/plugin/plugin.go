@@ -25,7 +25,7 @@ import (
 
 // Version is reported to Nomad in the fingerprint response and used to
 // register the plugin on each client node.
-const Version = "0.4.0"
+const Version = "0.5.0"
 
 // ConfigPaths are the host configuration files consulted in order; the first
 // one that exists wins. Values from the host file take precedence over
