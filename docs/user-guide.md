@@ -351,34 +351,46 @@ A file reference returns:
 Named file entries are prefixed like whole items, so a `cert` entry exposes
 `cert_value`, `cert_value_base64`, and `cert_filename`.
 
-**Materialize into a file** by exposing the value as an env var and having the
-task write it into the task's tmpfs secrets dir (`$NOMAD_SECRETS_DIR`, i.e.
-`secrets/`). Nomad interpolates `${secret...}` into `env {}` but **not** into a
-`template` block's `data`, so use the env path, not a template.
+**Materialize into a file** by exposing the value as an env var, then writing it
+into the task's tmpfs secrets dir (`$NOMAD_SECRETS_DIR`, i.e. `secrets/`). The
+env var is the required bridge: Nomad interpolates `${secret...}` into `env {}`
+but **not** into a `template` block's `data`, so a template reads the value back
+with `{{ env "..." }}` — you can't reference the secret in the template
+directly.
 
-Text file (UTF-8, e.g. a PEM bundle):
+Text file (UTF-8, e.g. a PEM bundle) — use the plain `value`. A `template`
+renders it and sets permissions declaratively with `perms`:
 
 ```hcl
 secret "cert" {
   provider = "remote-secrets"
-  path     = "bundle = op://Prod/tls-bundle" # a Document item
+  path     = "op://Prod/tls-bundle"          # a Document item (text)
 }
-env { BUNDLE = "${secret.cert.bundle_value}" }
-# in the task's command / entrypoint:
-#   printf '%s' "$BUNDLE" > "$NOMAD_SECRETS_DIR/bundle.pem"
+env { BUNDLE = "${secret.cert.value}" }
+template {
+  destination = "secrets/bundle.pem"
+  perms       = "0400"                        # owner read-only
+  data        = "{{ env \"BUNDLE\" }}"
+}
 ```
 
-Binary file (e.g. a PKCS#12 keystore) — decode the base64:
+Binary file (e.g. a PKCS#12 keystore) — there is no UTF-8 `value`, so decode
+`value_base64`. Decode in the entrypoint to keep the bytes exact and `chmod`:
 
 ```hcl
 secret "ks" {
   provider = "remote-secrets"
-  path     = "keystore = aws-sm:prod/tls/keystore" # a SecretBinary secret
+  path     = "aws-sm:prod/tls/keystore"       # a SecretBinary secret
 }
-env { KEYSTORE_B64 = "${secret.ks.keystore_value_base64}" }
+env { KEYSTORE_B64 = "${secret.ks.value_base64}" }
 # in the task's command / entrypoint:
 #   echo "$KEYSTORE_B64" | base64 -d > "$NOMAD_SECRETS_DIR/keystore.p12"
+#   chmod 0400 "$NOMAD_SECRETS_DIR/keystore.p12"
 ```
+
+A `template` can also decode with `{{ env "KEYSTORE_B64" | base64Decode }}` and
+set `perms`, but a heredoc's trailing newline can corrupt exact-byte binaries —
+prefer the entrypoint for binary files, the template for text.
 
 Files in `$NOMAD_SECRETS_DIR` live on tmpfs, aren't rendered in the Nomad UI,
 and are removed when the alloc stops.

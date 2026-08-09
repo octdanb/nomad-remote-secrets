@@ -115,27 +115,59 @@ template {
 }
 ```
 
-### File secret materialized to disk
+### File secret to a file on disk
 
-A 1Password document / file field or a Secrets Manager binary secret is
-delivered as base64 (plus a UTF-8 `value` when it's text). Decode it into the
-task's tmpfs secrets dir (`$NOMAD_SECRETS_DIR`) from the entrypoint:
+A file-like secret — a 1Password document / file field, or a Secrets Manager
+binary secret — is returned as interpolation keys; the plugin never writes the
+file itself. Because `${secret...}` can't be referenced inside a `template`
+block's `data` (only in `env {}`), you bridge through an env var. Whether you
+need base64 depends on the content:
+
+**Text (UTF-8) file** — e.g. a PEM bundle or config. Use the plain `value` key;
+a `template` renders it and sets permissions declaratively with `perms`:
 
 ```hcl
 secret "cert" {
   provider = "remote-secrets"
-  path     = "keystore = op://Production/tls/keystore"  # a FILE-type field
+  path     = "op://Production/tls/bundle"   # a text document
 }
 
 env {
-  KEYSTORE_B64 = "${secret.cert.keystore_value_base64}"
+  BUNDLE = "${secret.cert.value}"
+}
+
+template {
+  destination = "secrets/bundle.pem"        # tmpfs, never shown in the UI
+  perms       = "0400"                       # owner read-only
+  data        = "{{ env \"BUNDLE\" }}"
+}
+```
+
+**Binary file** — e.g. a `.zip`, PKCS#12 keystore, or image. There is no UTF-8
+`value`, so use `value_base64` and decode it. Decoding in the entrypoint keeps
+the bytes exact and lets you `chmod`:
+
+```hcl
+secret "ks" {
+  provider = "remote-secrets"
+  path     = "op://Production/tls/keystore"  # a FILE-type field (binary)
+}
+
+env {
+  KEYSTORE_B64 = "${secret.ks.value_base64}"
 }
 
 config {
   image = "app:latest"
-  # entrypoint: echo "$KEYSTORE_B64" | base64 -d > "$NOMAD_SECRETS_DIR/keystore.p12"
+  # entrypoint decodes and sets permissions:
+  #   echo "$KEYSTORE_B64" | base64 -d > "$NOMAD_SECRETS_DIR/keystore.p12"
+  #   chmod 0400 "$NOMAD_SECRETS_DIR/keystore.p12"
 }
 ```
+
+> A `template` can also decode with `{{ env "KEYSTORE_B64" | base64Decode }}`
+> and set `perms`, but a heredoc's trailing newline can corrupt exact-byte
+> binaries — prefer the entrypoint for binary files, the template for text.
 
 See the [user guide](docs/user-guide.md) for the full reference syntax, AWS
 setup, caching, and troubleshooting.
