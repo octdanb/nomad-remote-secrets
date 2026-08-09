@@ -7,8 +7,14 @@ plugin secret values are never rendered — the console may show the secret
 ## Run
 
 ```bash
-./e2e/ui/run.sh
+./e2e/ui/run.sh              # headless (CI default)
+./e2e/ui/run.sh --watch      # visible browser, slowed down so you can follow
+./e2e/ui/run.sh --ui         # Playwright interactive UI mode (step/replay)
 ```
+
+Run **without** sudo — the script sudo-prompts only for the Nomad agent, and a
+root-owned browser can't open a window in your desktop session. Any other args
+pass through to `playwright test`; tune the watch pace with `E2E_SLOWMO=<ms>`.
 
 Hermetic — reuses `e2e/fakeconnect` as the 1Password backend, boots a Nomad
 dev agent with the `remote-secrets` plugin, deploys `job-ui.nomad.hcl` (a
@@ -23,6 +29,9 @@ Node, and root/sudo.
   resolved secret value from both the rendered text and the raw DOM.
 - **HTTP API payloads** the UI consumes (`/v1/job/...`, `/v1/allocation/...`)
   carry the env-var *keys* but never the resolved secret values.
+- **File-secret values** — the job also injects file secrets (a document, a PEM
+  field, a binary keystore, a JSON document) as base64 env vars, so the suite
+  asserts their content *and* base64 encodings never render either.
 
 ## Config
 

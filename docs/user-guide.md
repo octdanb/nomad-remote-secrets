@@ -284,6 +284,7 @@ Per-reference options (append `?k=v`):
 | `?version=<id>` | `aws-sm:` | Fetch a specific `VersionId` |
 | `?stage=<label>` | `aws-sm:` | Fetch a `VersionStage` (e.g. `AWSPREVIOUS`) |
 | `?binary=true` | `aws-sm:` | Treat as binary even if `SecretString` is set (→ `value_base64`) |
+| `?encoding=base64` | `aws-sm:` | Drop the back-compat `value`, keep only `value_base64` (see [File-like secrets](#file-like-secrets)) |
 
 #### AWS IAM requirements
 
