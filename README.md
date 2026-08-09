@@ -560,7 +560,7 @@ To dig deeper, run the diagnostic on the client node:
 ```sh
 # verify config, backend, cache, connectivity, and token scope
 $ remote-secrets check
-remote-secrets provider v1.0.0 — diagnostic
+remote-secrets provider v1.0.1 — diagnostic
 
 OK   config loaded from: /etc/remote-secrets/config.env
 OK   backend: 1Password service account
