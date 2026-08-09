@@ -69,14 +69,13 @@ func (p *Provider) Describe() string {
 }
 
 // CacheKey returns the backend-namespaced cache key for ref and whether it
-// may be cached. OTP references rotate every 30 seconds and are never cached.
+// may be cached. Every 1Password reference is cacheable.
 func (p *Provider) CacheKey(ref string) (string, bool, error) {
 	r, err := opref.Parse(ref)
 	if err != nil {
 		return "", false, err
 	}
-	cacheable := r.Attribute != "otp"
-	return p.cacheScope() + "|" + r.String(), cacheable, nil
+	return p.cacheScope() + "|" + r.String(), true, nil
 }
 
 // Resolve parses ref and returns its interpolation key/value map.
@@ -211,12 +210,6 @@ func resolve(ctx context.Context, src Source, ref opref.Ref, maxFileBytes int64)
 	}
 
 	value := field.Value
-	if ref.Attribute == "otp" {
-		if field.TOTP == "" {
-			return provider.Result{}, fmt.Errorf("%s: field is not a one-time password field", ref)
-		}
-		value = field.TOTP
-	}
 
 	// "value" is the stable key for single-field references; the
 	// sanitized field label is included as a convenience alias.

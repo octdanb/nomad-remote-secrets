@@ -23,12 +23,39 @@ job "ui-secrets" {
         EOF
       }
 
+      # File-like secrets are injected too — as base64 env vars — so the UI
+      # leak test also proves file content (text, binary, JSON) never renders
+      # in the Nomad console, in either its raw or base64 form.
+      secret "doc" {
+        provider = "remote-secrets"
+        path     = "op://Testing/welcome"
+      }
+
+      secret "cert" {
+        provider = "remote-secrets"
+        path     = "op://Testing/tls/certificate"
+      }
+
+      secret "keystore" {
+        provider = "remote-secrets"
+        path     = "op://Testing/tls/keystore"
+      }
+
+      secret "config" {
+        provider = "remote-secrets"
+        path     = "op://Testing/appconfig"
+      }
+
       env {
         DB_PASSWORD = "${secret.db.value}"
         APP_PW      = "${secret.app.pw}"
         APP_REPLICA = "${secret.app.rep}"
         APP_USER    = "${secret.app.db_username}"
         APP_DB_HOST = "${secret.app.db_host_name}"
+        WELCOME_B64 = "${secret.doc.value_base64}"
+        CERT_B64    = "${secret.cert.value_base64}"
+        STORE_B64   = "${secret.keystore.value_base64}"
+        CONFIG_B64  = "${secret.config.value_base64}"
       }
 
       config {

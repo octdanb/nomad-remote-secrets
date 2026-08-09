@@ -14,7 +14,6 @@ func TestParse(t *testing.T) {
 		{"no scheme", "Prod/database/password", Ref{Vault: "Prod", Item: "database", Field: "password"}},
 		{"spaces kept", "op://My Vault/db server/password", Ref{Vault: "My Vault", Item: "db server", Field: "password"}},
 		{"percent decoded", "op://My%20Vault/db/password", Ref{Vault: "My Vault", Item: "db", Field: "password"}},
-		{"otp attribute", "op://Prod/mfa/one-time password?attribute=otp", Ref{Vault: "Prod", Item: "mfa", Field: "one-time password", Attribute: "otp"}},
 		{"file attribute on item", "op://Prod/mydoc?attribute=file", Ref{Vault: "Prod", Item: "mydoc", Attribute: "file"}},
 		{"file attribute on field", "op://Prod/item/cert?attribute=file", Ref{Vault: "Prod", Item: "item", Field: "cert", Attribute: "file"}},
 		{"encoding base64", "op://Prod/mydoc?encoding=base64", Ref{Vault: "Prod", Item: "mydoc", Encoding: "base64"}},
@@ -47,7 +46,7 @@ func TestParseErrors(t *testing.T) {
 		{"empty segment", "op://Prod//password"},
 		{"wrong scheme", "vault://Prod/db/password"},
 		{"unknown attribute", "op://Prod/db/password?attribute=ssh"},
-		{"otp on whole item", "op://Prod/db?attribute=otp"},
+		{"otp no longer supported", "op://Prod/db/code?attribute=otp"},
 		{"unknown encoding", "op://Prod/db?encoding=hex"},
 	}
 
@@ -75,7 +74,6 @@ func TestString(t *testing.T) {
 	for _, in := range []string{
 		"op://Prod/database/password",
 		"op://Prod/api/tokens/publish",
-		"op://Prod/mfa/code?attribute=otp",
 		"op://Prod/mydoc?attribute=file",
 		"op://Prod/mydoc?encoding=base64",
 	} {

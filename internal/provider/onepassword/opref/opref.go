@@ -18,10 +18,8 @@ type Ref struct {
 	Section string // section label or ID (optional, only with Field)
 	Field   string // field label or ID (optional)
 
-	// Attribute is the optional ?attribute= query parameter. "otp" asks for
-	// the current TOTP code of an OTP field instead of its stored value;
-	// "file" forces fetching the file content of a document item or file
-	// field.
+	// Attribute is the optional ?attribute= query parameter. "file" forces
+	// fetching the file content of a document item or file field.
 	Attribute string
 
 	// Encoding is the optional ?encoding= query parameter. "base64" forces
@@ -79,9 +77,9 @@ func Parse(raw string) (Ref, error) {
 	var attribute, encoding string
 	s, attribute, encoding = splitQuery(s)
 	switch attribute {
-	case "", "otp", "file":
+	case "", "file":
 	default:
-		return Ref{}, fmt.Errorf("unsupported attribute %q: only \"otp\" and \"file\" are supported", attribute)
+		return Ref{}, fmt.Errorf("unsupported attribute %q: only \"file\" is supported", attribute)
 	}
 	switch encoding {
 	case "", "base64":
@@ -115,12 +113,6 @@ func Parse(raw string) (Ref, error) {
 		ref.Vault, ref.Item, ref.Section, ref.Field = segs[0], segs[1], segs[2], segs[3]
 	default:
 		return Ref{}, fmt.Errorf("invalid secret reference %q: want op://<vault>/<item>[/<section>]/<field>", raw)
-	}
-
-	// ?attribute=otp needs a field segment; ?attribute=file is valid on a
-	// whole item too (a document item resolves to its file content).
-	if ref.Attribute == "otp" && ref.WholeItem() {
-		return Ref{}, fmt.Errorf("invalid secret reference %q: ?attribute=otp requires a field segment", raw)
 	}
 	return ref, nil
 }

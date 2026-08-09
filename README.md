@@ -224,7 +224,6 @@ The `op://` scheme accepts standard 1Password secret reference syntax:
 | `op://vault/item/field`                  | one field — exposed as `${secret.<name>.value}` |
 | `op://vault/item/section/field`          | one field inside a section |
 | `op://vault/item`                        | the whole item — every non-empty field by its label |
-| `op://vault/item/field?attribute=otp`    | the current TOTP code of an OTP field (never cached) |
 
 Details:
 
@@ -438,7 +437,7 @@ Reference syntax per backend:
   content automatically. A FILE-type field (`op://Vault/Item/attachment`)
   resolves to that attachment. Force file semantics on any item or field with
   `?attribute=file`. `?encoding=base64` drops the utf8 `value`, leaving only
-  `value_base64`. `?attribute=otp` is unchanged.
+  `value_base64`.
 - **AWS Secrets Manager** — a `SecretBinary` secret is detected automatically
   and base64-encoded; `?binary` forces binary handling and `?encoding=base64`
   drops the back-compat `value` (which otherwise carries the base64 string).
@@ -524,7 +523,6 @@ Nomad executes the plugin once per secret fetch, so caching lives on disk:
   so deploys and restarts keep working through short outages.
 - Cache entries are keyed by Connect host + token digest + reference, so
   values are never shared across different servers or tokens.
-- OTP codes (`?attribute=otp`) are never cached.
 
 Consequence of caching: after rotating a secret in 1Password, clients may
 serve the old value for up to the TTL. Set `OP_CACHE_TTL=0` in the host
@@ -562,7 +560,7 @@ To dig deeper, run the diagnostic on the client node:
 ```sh
 # verify config, backend, cache, connectivity, and token scope
 $ remote-secrets check
-remote-secrets provider v0.5.0 — diagnostic
+remote-secrets provider v1.0.0 — diagnostic
 
 OK   config loaded from: /etc/remote-secrets/config.env
 OK   backend: 1Password service account
@@ -647,7 +645,7 @@ export OP_CONNECT_TOKEN=eyJ...
 
 ## Limitations
 
-- Supported query attributes are `?attribute=otp`, `?attribute=file`,
+- Supported query attributes are `?attribute=file`,
   `?encoding=base64` (1Password); `?raw`, `?decrypt` (Parameter Store); and
   `?raw`, `?binary`, `?encoding=base64`, `?version`, `?stage` (Secrets
   Manager). See [AWS references](#aws-references) and

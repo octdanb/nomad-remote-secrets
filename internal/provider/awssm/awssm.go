@@ -123,8 +123,8 @@ func (p *Provider) parse(ref string) (options, error) {
 	return opts, nil
 }
 
-// CacheKey returns the backend-namespaced cache key for ref. Secrets Manager
-// has no OTP concept, so every reference is cacheable.
+// CacheKey returns the backend-namespaced cache key for ref. Every Secrets
+// Manager reference is cacheable.
 func (p *Provider) CacheKey(ref string) (string, bool, error) {
 	opts, err := p.parse(ref)
 	if err != nil {

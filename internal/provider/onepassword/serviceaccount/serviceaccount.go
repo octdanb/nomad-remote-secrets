@@ -188,14 +188,6 @@ func toOpItem(it *onepassword.Item) *opitem.Item {
 		if id, ok := filesByField[f.ID]; ok {
 			nf.FileID = id
 		}
-		if f.FieldType == onepassword.ItemFieldTypeTOTP {
-			nf.Type = "OTP"
-			if f.Details != nil {
-				if otp := f.Details.OTP(); otp != nil && otp.Code != nil {
-					nf.TOTP = *otp.Code
-				}
-			}
-		}
 		out.Fields = append(out.Fields, nf)
 	}
 	// The SDK surfaces the notes field as a top-level property rather

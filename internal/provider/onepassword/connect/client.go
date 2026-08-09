@@ -56,10 +56,9 @@ type Section struct {
 type Field struct {
 	ID      string   `json:"id"`
 	Label   string   `json:"label"`
-	Type    string   `json:"type"`    // e.g. STRING, CONCEALED, OTP, FILE
+	Type    string   `json:"type"`    // e.g. STRING, CONCEALED, FILE
 	Purpose string   `json:"purpose"` // e.g. USERNAME, PASSWORD, NOTES
 	Value   string   `json:"value"`
-	TOTP    string   `json:"totp"` // current code, set on OTP fields
 	Section *Section `json:"section"`
 }
 
@@ -196,7 +195,6 @@ func toOpItem(it *Item) *opitem.Item {
 			Type:    f.Type,
 			Purpose: f.Purpose,
 			Value:   f.Value,
-			TOTP:    f.TOTP,
 		}
 		if f.Section != nil {
 			nf.SectionID = f.Section.ID

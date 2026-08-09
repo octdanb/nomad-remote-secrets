@@ -51,20 +51,3 @@ func TestToOpItem(t *testing.T) {
 		t.Errorf("notes field = %+v", f)
 	}
 }
-
-func TestToOpItemTOTP(t *testing.T) {
-	sdkItem := &onepassword.Item{
-		ID: "itemid",
-		Fields: []onepassword.ItemField{
-			{ID: "f1", Title: "one-time password", FieldType: onepassword.ItemFieldTypeTOTP, Value: "otpauth://totp/x"},
-		},
-	}
-	item := toOpItem(sdkItem)
-	if item.Fields[0].Type != "OTP" {
-		t.Errorf("TOTP field type = %q, want OTP", item.Fields[0].Type)
-	}
-	// Details are nil here, so no code — the value stays the otpauth URI.
-	if item.Fields[0].TOTP != "" || item.Fields[0].Value != "otpauth://totp/x" {
-		t.Errorf("TOTP field = %+v", item.Fields[0])
-	}
-}

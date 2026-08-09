@@ -8,3 +8,7 @@ crash.log
 *.tfstate*
 terraform.tfvars
 *.auto.tfvars
+
+# stray build artifact (package lives in e2e/fakeconnect/)
+/fakeconnect
+.idea/

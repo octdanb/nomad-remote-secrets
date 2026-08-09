@@ -18,7 +18,7 @@ const (
 )
 
 // fakeConnect serves one vault ("Prod") holding one item ("database") with
-// top-level login fields, a sectioned field, and an OTP field.
+// top-level login fields and a sectioned field.
 func fakeConnect(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -33,7 +33,6 @@ func fakeConnect(t *testing.T) *httptest.Server {
 			{ID: "f2", Label: "password", Purpose: "PASSWORD", Value: "hunter2"},
 			{ID: "f3", Label: "host name", Value: "db.internal"},
 			{ID: "f4", Label: "password", Value: "replica-pass", Section: &connect.Section{ID: "s1"}},
-			{ID: "f5", Label: "one-time password", Type: "OTP", Value: "otpauth://totp/x", TOTP: "123456"},
 		},
 	}
 
@@ -228,16 +227,6 @@ func TestFetchMultiSharesCache(t *testing.T) {
 	}
 }
 
-func TestFetchOTPAttribute(t *testing.T) {
-	srv := fakeConnect(t)
-	setupEnv(t, srv.URL)
-
-	resp := runFetch(t, "op://Prod/database/one-time password?attribute=otp")
-	if resp.Result["value"] != "123456" {
-		t.Fatalf("result = %v, want current TOTP code", resp.Result)
-	}
-}
-
 func TestFetchMissingFieldError(t *testing.T) {
 	srv := fakeConnect(t)
 	setupEnv(t, srv.URL)
@@ -364,23 +353,6 @@ func TestCheckBadTokenFailsConnectivity(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "FAIL connectivity") {
 		t.Errorf("output:\n%s", out.String())
-	}
-}
-
-func TestOTPNeverCached(t *testing.T) {
-	srv := fakeConnect(t)
-	setupEnv(t, srv.URL)
-	t.Setenv("OP_REQUEST_TIMEOUT", "500ms")
-
-	first := runFetch(t, "op://Prod/database/one-time password?attribute=otp")
-	if first.Error != "" {
-		t.Fatal(first.Error)
-	}
-
-	srv.Close()
-	resp := runFetch(t, "op://Prod/database/one-time password?attribute=otp")
-	if resp.Error == "" {
-		t.Fatal("OTP fetch must not be served from cache")
 	}
 }
 

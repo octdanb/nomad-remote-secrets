@@ -22,6 +22,18 @@ nomad agent -dev ── fingerprint ──> remote-secrets plugin
 # without docker:
 E2E_DRIVER=raw_exec ./e2e/run.sh
 
+# file-secret coverage (docker service + `nomad alloc exec`):
+./e2e/files/run.sh
+
+# Nomad web UI never leaks resolved secrets (Playwright):
+./e2e/ui/run.sh
+
+# ...watch it drive a real browser (headed + slow-mo):
+./e2e/ui/run.sh --watch
+# ...or step through interactively in Playwright's UI mode:
+./e2e/ui/run.sh --ui
+# (any other args pass through to `playwright test`; tune pace with E2E_SLOWMO=<ms>)
+
 # against a real vault:
 E2E_MODE=real \
   OP_SERVICE_ACCOUNT_TOKEN=ops_... \
@@ -59,7 +71,9 @@ Repo secrets aren't exposed to fork PRs, so the job is skipped there.
 | File | Purpose |
 |---|---|
 | `run.sh` | orchestrates: build → install plugin → backend config → dev agent → job → assert |
-| `fakeconnect/` | in-memory 1Password Connect stand-in (vault `Testing`, item `database`) |
+| `fakeconnect/` | in-memory 1Password Connect stand-in (vault `Testing`: `database`, `welcome`, `tls`, `appconfig`) |
 | `agent.hcl` | dev-agent overrides: `common_plugin_dir`, raw_exec enabled |
 | `job-docker.nomad.hcl` / `job-rawexec.nomad.hcl` | fake-mode job, three secret shapes |
 | `job-real.nomad.hcl` | real-mode job, caller-supplied reference |
+| `files/run.sh` + `files/job-files.nomad.hcl` | file-secret coverage: materializes a text document, PEM file field, binary keystore field, and JSON document into a Docker service, then `nomad alloc exec` asserts each file's accessibility, exact bytes (sha256), permissions (`stat`), and surfaced filename |
+| `ui/` | Playwright suite proving resolved secret values (incl. file content and its base64) never render in the Nomad web UI |

@@ -6,6 +6,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"log"
@@ -20,11 +21,44 @@ const (
 	docID   = "e2edocitem00000000000000ab"
 	fileID  = "e2efileid000000000000000ab"
 	token   = "e2e-test-token"
+
+	// tls is a LOGIN item carrying two FILE-type fields: a UTF-8 PEM
+	// certificate and a binary keystore. appconfig is a DOCUMENT item whose
+	// content is a JSON file. Together they let the file-secret e2e assert
+	// text and binary delivery, values, and permissions in a container.
+	tlsItemID   = "e2etlsitem00000000000000ab"
+	certFileID  = "e2ecertfile0000000000000ab"
+	storeFileID = "e2estorefile000000000000ab"
+
+	cfgItemID = "e2ecfgitem00000000000000ab"
+	cfgFileID = "e2ecfgfile00000000000000ab"
 )
 
-// docContent is the body of the "welcome" document item; the e2e job
-// materializes it into secrets/ via a template and asserts on it.
-const docContent = "e2e-document-content\n"
+// File contents the file-secret e2e materializes into secrets/ and asserts
+// on. Each is a single source of truth shared with e2e/files/run.sh, which
+// reproduces them to compare values (text directly, binary via base64+sha256).
+const (
+	docContent = "e2e-document-content\n"                                                         // welcome.txt (text document)
+	certPEM    = "-----BEGIN CERTIFICATE-----\nZTJlLXRscy1jZXJ0Cg==\n-----END CERTIFICATE-----\n" // server.pem (text file field)
+	appCfgJSON = "{\"db\":{\"host\":\"db.internal.test\",\"port\":5432}}\n"                       // config.json (JSON document)
+
+	// keystoreB64 is the base64 of the binary keystore. It is stored as
+	// base64 so run.sh can reproduce the exact bytes with `base64 -d`; the
+	// decoded bytes contain a NUL and 0xFF, so they are not valid UTF-8 and
+	// the plugin delivers them as value_base64 only.
+	keystoreB64 = "3q2+7wD/AAG71g=="
+)
+
+// keystoreBytes is the raw binary keystore content served for the file field.
+var keystoreBytes = mustB64(keystoreB64)
+
+func mustB64(s string) []byte {
+	b, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8999", "listen address")
@@ -51,6 +85,36 @@ func main() {
 		Files: []connect.File{
 			{ID: fileID, Name: "welcome.txt", Size: len(docContent),
 				ContentPath: "/v1/vaults/" + vaultID + "/items/" + docID + "/files/" + fileID + "/content"},
+		},
+	}
+
+	// A LOGIN item with two FILE-type fields: a UTF-8 PEM certificate and a
+	// binary keystore. Each field references a file by ID; the plugin fetches
+	// the bytes lazily from the field's content path.
+	tls := connect.Item{
+		ID:       tlsItemID,
+		Title:    "tls",
+		Category: "LOGIN",
+		Fields: []connect.Field{
+			{ID: "cf1", Label: "certificate", Type: "FILE"},
+			{ID: "cf2", Label: "keystore", Type: "FILE"},
+		},
+		Files: []connect.File{
+			{ID: certFileID, Name: "server.pem", Size: len(certPEM), FieldID: "cf1",
+				ContentPath: "/v1/vaults/" + vaultID + "/items/" + tlsItemID + "/files/" + certFileID + "/content"},
+			{ID: storeFileID, Name: "keystore.p12", Size: len(keystoreBytes), FieldID: "cf2",
+				ContentPath: "/v1/vaults/" + vaultID + "/items/" + tlsItemID + "/files/" + storeFileID + "/content"},
+		},
+	}
+
+	// A Document item whose content is a JSON config file.
+	appcfg := connect.Item{
+		ID:       cfgItemID,
+		Title:    "appconfig",
+		Category: "DOCUMENT",
+		Files: []connect.File{
+			{ID: cfgFileID, Name: "config.json", Size: len(appCfgJSON),
+				ContentPath: "/v1/vaults/" + vaultID + "/items/" + cfgItemID + "/files/" + cfgFileID + "/content"},
 		},
 	}
 
@@ -83,6 +147,10 @@ func main() {
 			json.NewEncoder(w).Encode([]connect.Item{{ID: itemID, Title: "database"}})
 		case `title eq "welcome"`:
 			json.NewEncoder(w).Encode([]connect.Item{{ID: docID, Title: "welcome"}})
+		case `title eq "tls"`:
+			json.NewEncoder(w).Encode([]connect.Item{{ID: tlsItemID, Title: "tls"}})
+		case `title eq "appconfig"`:
+			json.NewEncoder(w).Encode([]connect.Item{{ID: cfgItemID, Title: "appconfig"}})
 		default:
 			json.NewEncoder(w).Encode([]connect.Item{})
 		}
@@ -96,8 +164,28 @@ func main() {
 		json.NewEncoder(w).Encode(doc)
 	}))
 
+	mux.HandleFunc("GET /v1/vaults/"+vaultID+"/items/"+tlsItemID, authed(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(tls)
+	}))
+
+	mux.HandleFunc("GET /v1/vaults/"+vaultID+"/items/"+cfgItemID, authed(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(appcfg)
+	}))
+
 	mux.HandleFunc("GET /v1/vaults/"+vaultID+"/items/"+docID+"/files/"+fileID+"/content", authed(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(docContent))
+	}))
+
+	mux.HandleFunc("GET /v1/vaults/"+vaultID+"/items/"+tlsItemID+"/files/"+certFileID+"/content", authed(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(certPEM))
+	}))
+
+	mux.HandleFunc("GET /v1/vaults/"+vaultID+"/items/"+tlsItemID+"/files/"+storeFileID+"/content", authed(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(keystoreBytes)
+	}))
+
+	mux.HandleFunc("GET /v1/vaults/"+vaultID+"/items/"+cfgItemID+"/files/"+cfgFileID+"/content", authed(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(appCfgJSON))
 	}))
 
 	log.Printf("fake 1Password Connect listening on %s (token: %s)", *addr, token)

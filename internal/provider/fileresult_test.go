@@ -44,3 +44,18 @@ func TestFileResultNoName(t *testing.T) {
 		t.Error("filename must be omitted when unknown")
 	}
 }
+
+func TestFileResultEmpty(t *testing.T) {
+	// An empty file is valid UTF-8, so "value" is present but empty and
+	// "value_base64" is the empty string.
+	r := FileResult("empty.txt", []byte{})
+	if got, ok := r.Values["value"]; !ok || got != "" {
+		t.Errorf("value = %q (present=%v), want empty and present", got, ok)
+	}
+	if got := r.Values["value_base64"]; got != "" {
+		t.Errorf("value_base64 = %q, want empty", got)
+	}
+	if got := r.Values["filename"]; got != "empty.txt" {
+		t.Errorf("filename = %q, want empty.txt", got)
+	}
+}

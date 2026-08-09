@@ -20,10 +20,9 @@ type Section struct {
 type Field struct {
 	ID        string
 	Label     string
-	Type      string // e.g. STRING, CONCEALED, OTP
+	Type      string // e.g. STRING, CONCEALED, FILE
 	Purpose   string // e.g. USERNAME, PASSWORD, NOTES (empty if none)
 	Value     string
-	TOTP      string // current code, set on OTP fields when available
 	SectionID string // empty for top-level fields
 	FileID    string // set for FILE-type fields: the attached file's ID
 }

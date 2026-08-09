@@ -23,8 +23,8 @@ type Result struct {
 // Provider resolves references for a single backend.
 type Provider interface {
 	// CacheKey returns a stable, backend-namespaced cache key for ref and
-	// whether the ref may be cached (false, e.g., for 1Password OTP). It is
-	// called before Resolve so uncacheable refs skip the cache entirely.
+	// whether the ref may be cached. It is called before Resolve so
+	// uncacheable refs skip the cache entirely.
 	CacheKey(ref string) (key string, cacheable bool, err error)
 	// Resolve turns a reference into its interpolation key/value map.
 	Resolve(ctx context.Context, ref string) (Result, error)
