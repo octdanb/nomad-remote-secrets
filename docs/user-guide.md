@@ -600,5 +600,3 @@ If `nomad node status -verbose <node> | grep remote-secrets` returns nothing:
 - The `env {}` block in a `secret` stanza does not support Nomad variable
   interpolation (values arrive as literal strings — a
   [known Nomad limitation](https://github.com/hashicorp/nomad/issues/27569)).
-</content>
-</invoke>

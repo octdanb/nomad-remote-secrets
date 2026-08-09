@@ -180,5 +180,3 @@ publishing anything.
   the active backend/config).
 - Secret values must never reach logs, job specs, or Nomad server state — only
   the task's resolved environment.
-</content>
-</invoke>

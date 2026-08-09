@@ -6,18 +6,27 @@
 ![Nomad 1.11+](https://img.shields.io/badge/nomad-1.11%2B-00CA8E?logo=nomad)
 
 A [Nomad secret provider plugin](https://developer.hashicorp.com/nomad/plugins/author/secret-provider)
-that resolves secret references from multiple backends, so job specs can pull
-secrets at deploy time **without running HashiCorp Vault**.
+that resolves secret references from various backend secret providers, so job specs can pull
+secrets at deploy time.
 
-It is a single scheme-routed binary named `remote-secrets`: jobs always say
-`provider = "remote-secrets"`, and the **reference scheme** selects the backend
-at fetch time — so one `secret` block may mix providers.
-
+## Supported providers
 | Provider | Scheme | Example |
 |---|---|---|
 | [1Password](https://developer.1password.com/) | `op://` | `op://Production/database/password` |
 | [AWS Parameter Store](https://docs.aws.amazon.com/systems-manager/latest/userguide/systems-manager-parameter-store.html) | `aws-ssm:` | `aws-ssm:/prod/db/password` or a parameter ARN |
 | [AWS Secrets Manager](https://docs.aws.amazon.com/secretsmanager/) | `aws-sm:` | `aws-sm:prod/db/creds` or a secret ARN |
+
+
+## Usage examples
+
+These blocks live inside a Nomad `task` (a `secret` block may also sit at the
+group or job level). At deploy time the client fetches each reference from its
+backend, caches it locally, and interpolates the result into the task — secrets
+never appear in the job spec, in Nomad server state, or in plugin logs.
+
+### Single field
+
+Fetch one field and expose it as an environment variable:
 
 ```hcl
 task "app" {
@@ -34,10 +43,102 @@ task "app" {
 }
 ```
 
-At deploy time the Nomad client fetches the secret from the backend, caches it
-locally, and interpolates it into the task — here as an environment variable
-inside the container. Secrets never appear in the job spec, in Nomad server
-state, or in plugin logs.
+### Whole item (field expansion)
+
+Reference an item with no field segment and every field expands into its own
+interpolation key. (An AWS secret whose value is a JSON object expands the same
+way.)
+
+```hcl
+secret "db" {
+  provider = "remote-secrets"
+  path     = "op://Production/database"   # whole item — no field
+}
+
+env {
+  DB_USER     = "${secret.db.username}"
+  DB_PASSWORD = "${secret.db.password}"
+  DB_HOST     = "${secret.db.host_name}"  # label "host name" → host_name
+}
+```
+
+### Multiple secrets in one block
+
+Put one `name = <reference>` per line — entries may even mix backends. A
+single-field entry is exposed under its name; a whole-item entry is prefixed
+with its name (`twilio` → `twilio_username`, `twilio_password`, …):
+
+```hcl
+secret "app" {
+  provider = "remote-secrets"
+  path     = <<-EOF
+    # one line per secret: <name> = <reference>
+    db_password = op://Production/database/password
+    api_key     = op://Production/api/credential
+    twilio      = op://Production/twilio-prod
+  EOF
+}
+
+env {
+  DB_PASSWORD        = "${secret.app.db_password}"
+  API_KEY            = "${secret.app.api_key}"
+  TWILIO_ACCOUNT_SID = "${secret.app.twilio_username}"
+  TWILIO_AUTH_TOKEN  = "${secret.app.twilio_password}"
+}
+```
+
+The fetch **fails closed**: if any one reference can't be resolved, the whole
+block errors and the task never starts with a partial secret set.
+
+### Secret into a rendered config file (template)
+
+`${secret...}` interpolates into `env {}` but **not** into a `template` block's
+`data`. To render a secret into a config file, expose it as an env var and read
+it back in the template with `{{ env }}`:
+
+```hcl
+secret "db" {
+  provider = "remote-secrets"
+  path     = "op://Production/database/password"
+}
+
+env {
+  DB_PASSWORD = "${secret.db.value}"
+}
+
+template {
+  destination = "secrets/app.conf"   # tmpfs, never shown in the Nomad UI
+  data        = <<-EOT
+    [database]
+    password = {{ env "DB_PASSWORD" }}
+  EOT
+}
+```
+
+### File secret materialized to disk
+
+A 1Password document / file field or a Secrets Manager binary secret is
+delivered as base64 (plus a UTF-8 `value` when it's text). Decode it into the
+task's tmpfs secrets dir (`$NOMAD_SECRETS_DIR`) from the entrypoint:
+
+```hcl
+secret "cert" {
+  provider = "remote-secrets"
+  path     = "keystore = op://Production/tls/keystore"  # a FILE-type field
+}
+
+env {
+  KEYSTORE_B64 = "${secret.cert.keystore_value_base64}"
+}
+
+config {
+  image = "app:latest"
+  # entrypoint: echo "$KEYSTORE_B64" | base64 -d > "$NOMAD_SECRETS_DIR/keystore.p12"
+}
+```
+
+See the [user guide](docs/user-guide.md) for the full reference syntax, AWS
+setup, caching, and troubleshooting.
 
 ## Features
 
@@ -112,4 +213,3 @@ matrix. See the [developer guide](docs/developer-guide.md) for the workflow.
 No `LICENSE` file is present yet, so no usage rights are granted by default.
 Add a license (e.g. MPL-2.0 or Apache-2.0) to define how others may use this
 project.
-</content>
