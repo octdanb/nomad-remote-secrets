@@ -395,6 +395,59 @@ prefer the entrypoint for binary files, the template for text.
 Files in `$NOMAD_SECRETS_DIR` live on tmpfs, aren't rendered in the Nomad UI,
 and are removed when the alloc stops.
 
+#### Keeping the secret out of the task environment
+
+The bridge env var (`BUNDLE`, `KEYSTORE_B64`, …) exists in the task's runtime
+environment. Nomad **redacts secret-sourced values from its UI and API**, so it
+never appears in the job definition or console — but the running container's
+process environment still holds it (readable by the app, and by a host operator
+via `docker inspect` / `/proc/<pid>/environ`). Two ways to keep it out of the
+application:
+
+**Unset it in a wrapper** — templates render *before* the task command runs, so
+the file already exists; drop the var, then `exec` the app:
+
+```hcl
+config {
+  command = "/bin/sh"
+  args    = ["-c", "unset BUNDLE; exec /app --tls-cert secrets/bundle.pem"]
+}
+```
+
+This removes it from the app and its children (it is still visible in
+`docker inspect`, since it was passed to the container).
+
+**Use a `prestart` lifecycle task** for full isolation — a short-lived task
+holds the secret and writes the file to the shared alloc dir; the application
+task declares no `secret` block and carries no secret env var at all:
+
+```hcl
+task "materialize" {
+  lifecycle { hook = "prestart" }
+  driver = "docker"
+
+  secret "cert" {
+    provider = "remote-secrets"
+    path     = "op://Production/tls/bundle"
+  }
+  env { BUNDLE = "${secret.cert.value}" }
+
+  config {
+    image = "busybox:1.36"
+    args  = ["sh", "-c",
+      "printf %s \"$BUNDLE\" > ${NOMAD_ALLOC_DIR}/data/bundle.pem && chmod 0400 ${NOMAD_ALLOC_DIR}/data/bundle.pem"]
+  }
+}
+
+task "app" {
+  driver = "docker"
+  config { image = "app:latest" }   # reads ${NOMAD_ALLOC_DIR}/data/bundle.pem
+}
+```
+
+The shared alloc dir (`$NOMAD_ALLOC_DIR/data`) is readable by every task in the
+group but not by other allocations, and is removed when the alloc stops.
+
 Reference syntax per backend:
 
 - **1Password** — a Document item (`op://Vault/MyDocument`) resolves to its

@@ -143,6 +143,11 @@ template {
 }
 ```
 
+The bridge env var lives in the task's runtime environment (Nomad still redacts
+it from the UI/API). To keep it out of the running app — unset it in a wrapper,
+or hold it in a `prestart` task — see
+[keeping the secret out of the task environment](docs/user-guide.md#keeping-the-secret-out-of-the-task-environment).
+
 **Binary file** — e.g. a `.zip`, PKCS#12 keystore, or image. There is no UTF-8
 `value`, so use `value_base64` and decode it. Decoding in the entrypoint keeps
 the bytes exact and lets you `chmod`:
