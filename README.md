@@ -4,6 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/octdanb/nomad-remote-secrets?sort=semver)](https://github.com/octdanb/nomad-remote-secrets/releases)
 [![Go](https://img.shields.io/github/go-mod/go-version/octdanb/nomad-remote-secrets)](go.mod)
 ![Nomad 1.11+](https://img.shields.io/badge/nomad-1.11%2B-00CA8E?logo=nomad)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A [Nomad secret provider plugin](https://developer.hashicorp.com/nomad/plugins/author/secret-provider)
 that resolves secret references from various backend secret providers, so job specs can pull
@@ -247,6 +248,4 @@ matrix. See the [developer guide](docs/developer-guide.md) for the workflow.
 
 ## License
 
-No `LICENSE` file is present yet, so no usage rights are granted by default.
-Add a license (e.g. MPL-2.0 or Apache-2.0) to define how others may use this
-project.
+[MIT](LICENSE) © 2026 octdanb.

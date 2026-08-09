@@ -70,7 +70,7 @@ be unique names or you must use their IDs.
    `SHA256SUMS` file. Download, verify the checksum, and install:
 
    ```sh
-   VERSION=v1.0.1                       # pick a release tag
+   VERSION=v1.0.2                       # pick a release tag
    ARCH=amd64                           # or arm64
    base="https://github.com/octdanb/nomad-remote-secrets/releases/download/$VERSION"
    curl -fsSLO "$base/remote-secrets_linux_$ARCH"
@@ -592,7 +592,7 @@ To dig deeper, run the diagnostic on the client node:
 ```sh
 # verify config, backend, cache, connectivity, and token scope
 $ remote-secrets check
-remote-secrets provider v1.0.1 — diagnostic
+remote-secrets provider v1.0.2 — diagnostic
 
 OK   config loaded from: /etc/remote-secrets/config.env
 OK   backend: 1Password service account
