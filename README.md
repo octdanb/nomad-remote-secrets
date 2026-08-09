@@ -63,10 +63,11 @@ Requires **Nomad 1.11.0+** (the release that introduced the `secret` block) and
 a backend credential. Full details in the [user guide](docs/user-guide.md).
 
 ```sh
-# 1. Build and install on each Nomad client node
-make install PLUGIN_DIR=/opt/nomad/plugins
-#    → /opt/nomad/plugins/secrets/remote-secrets
-#    (or grab a prebuilt Linux binary from the Releases page)
+# 1. Install the plugin on each Nomad client node — either option lands it at
+#    <common_plugin_dir>/secrets/remote-secrets:
+#    • prebuilt:    download remote-secrets_linux_<arch> from the Releases page,
+#                   verify against SHA256SUMS, and install it (see user guide)
+#    • from source: make install PLUGIN_DIR=/opt/nomad/plugins
 
 # 2. Point the client agent at the plugin directory (examples/client.hcl)
 #    client { enabled = true; common_plugin_dir = "/opt/nomad/plugins" }

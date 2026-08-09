@@ -61,29 +61,39 @@ be unique names or you must use their IDs.
 > cluster with 1Password/SSM secret wiring. The steps below cover manual
 > installation.
 
-1. **Build the binary** (Go 1.24+). Nomad clients are Linux, so build for Linux
-   — `make build` targets your current OS, `make release` cross-builds Linux
-   amd64/arm64:
+1. **Install the plugin binary on every Nomad client node** at
+   `<common_plugin_dir>/secrets/remote-secrets`. Choose one of:
+
+   **Option A — prebuilt binary from GitHub releases** (recommended). Each
+   [release](https://github.com/octdanb/nomad-remote-secrets/releases) attaches
+   `remote-secrets_linux_amd64`, `remote-secrets_linux_arm64`, and a
+   `SHA256SUMS` file. Download, verify the checksum, and install:
 
    ```sh
-   make build            # → bin/remote-secrets (current platform)
-   make release          # → bin/remote-secrets_linux_{amd64,arm64}
+   VERSION=v1.0.1                       # pick a release tag
+   ARCH=amd64                           # or arm64
+   base="https://github.com/octdanb/nomad-remote-secrets/releases/download/$VERSION"
+   curl -fsSLO "$base/remote-secrets_linux_$ARCH"
+   curl -fsSLO "$base/SHA256SUMS"
+   sha256sum --check --ignore-missing SHA256SUMS   # verify integrity
+   sudo install -D -m 0755 "remote-secrets_linux_$ARCH" \
+     /opt/nomad/plugins/secrets/remote-secrets
    ```
 
-   Prebuilt Linux binaries and a `SHA256SUMS` file are attached to each
-   [GitHub release](https://github.com/octdanb/nomad-remote-secrets/releases).
-
-2. **Install it on every Nomad client node** as
-   `<common_plugin_dir>/secrets/remote-secrets`:
+   **Option B — build from source** (Go 1.24+). Nomad clients are Linux, so
+   build for Linux — `make build` targets your current OS, `make release`
+   cross-builds Linux amd64/arm64, and `make install` copies it into place:
 
    ```sh
-   make install PLUGIN_DIR=/opt/nomad/plugins
+   make release                                 # → bin/remote-secrets_linux_{amd64,arm64}
+   make install PLUGIN_DIR=/opt/nomad/plugins   # → <dir>/secrets/remote-secrets
    ```
 
-   The file name is the provider name — jobs say `provider = "remote-secrets"`
-   because the binary is called `remote-secrets`.
+   Either way the file name **must** be `remote-secrets` — that is the provider
+   name, so jobs say `provider = "remote-secrets"` — under a `secrets/`
+   subdirectory of `common_plugin_dir`.
 
-3. **Point the client agent at the plugin directory**
+2. **Point the client agent at the plugin directory**
    ([`examples/client.hcl`](../examples/client.hcl)):
 
    ```hcl
@@ -93,7 +103,7 @@ be unique names or you must use their IDs.
    }
    ```
 
-4. **Configure a backend on each node**
+3. **Configure a backend on each node**
    ([`examples/config.env`](../examples/config.env)). The config file path is
    `/etc/remote-secrets/config.env`; `/etc/nomad.d/remote-secrets.env` is also
    consulted.
@@ -139,7 +149,7 @@ be unique names or you must use their IDs.
    Backends coexist: configure any subset. Each reference's scheme picks the
    backend, so a single node can serve `op://`, `aws-ssm:`, and `aws-sm:`.
 
-5. **Verify** the node's config, backend connectivity, and credential scope
+4. **Verify** the node's config, backend connectivity, and credential scope
    *before* restarting Nomad — this catches a bad token or region without a
    failed deploy (see [Troubleshooting](#troubleshooting)):
 
@@ -147,7 +157,7 @@ be unique names or you must use their IDs.
    /opt/nomad/plugins/secrets/remote-secrets check
    ```
 
-6. **Restart** (or SIGHUP) the Nomad client so it discovers the plugin, then
+5. **Restart** (or SIGHUP) the Nomad client so it discovers the plugin, then
    confirm it registered:
 
    ```sh
@@ -225,7 +235,7 @@ a secret scoped to the one task that needs it.
 
 Both AWS backends need `AWS_REGION` (plus optional `AWS_ENDPOINT_URL`) in the
 host config; credentials come from the EC2/ECS instance role, static keys, or a
-profile in the host config (see [Installation](#installation) step 4 and the
+profile in the host config (see [Installation](#installation) step 3 and the
 credential note below). The scheme selects the service:
 
 | Reference | Resolves to |
@@ -547,7 +557,7 @@ If `nomad node status -verbose <node> | grep remote-secrets` returns nothing:
   `<common_plugin_dir>/secrets/remote-secrets`. The `secrets/` subdirectory is
   required (it's Nomad's secrets-plugin type dir).
 - **Not executable** — `chmod 0755` the binary.
-- **`common_plugin_dir` unset** — set it in the client stanza (step 3) and make
+- **`common_plugin_dir` unset** — set it in the client stanza (step 2) and make
   sure the agent actually loaded that config.
 - **Not rescanned** — Nomad only scans the plugin dir at agent **start or
   SIGHUP**. After installing/updating the binary, `systemctl reload nomad` (or
