@@ -70,7 +70,7 @@ be unique names or you must use their IDs.
    `SHA256SUMS` file. Download, verify the checksum, and install:
 
    ```sh
-   VERSION=v1.0.3                       # pick a release tag
+   VERSION=v1.1.0                       # pick a release tag
    ARCH=amd64                           # or arm64
    base="https://github.com/octdanb/nomad-remote-secrets/releases/download/$VERSION"
    curl -fsSLO "$base/remote-secrets_linux_$ARCH"
@@ -485,7 +485,7 @@ Settings come from (highest precedence first):
 | `OP_CACHE_TTL` | `5m` | Serve cached values this long without re-fetching; `0` disables |
 | `OP_CACHE_MAX_STALE` | `24h` | On backend outage, serve values up to this old; `0` disables |
 | `OP_CACHE_DIR` | `/var/cache/remote-secrets` | Cache location |
-| `OP_REQUEST_TIMEOUT` | `30s` | Per-fetch backend timeout (Nomad kills fetches at 60s) |
+| `OP_REQUEST_TIMEOUT` | `45s` | Per-fetch budget, kept under Nomad's 60s kill so a slow fetch reports an error instead of `signal: terminated` |
 | `AWS_REGION` | — | AWS region; setting it (or `AWS_ENDPOINT_URL`) enables the AWS backends |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | — | Static AWS credentials (otherwise the SDK default chain / instance role is used) |
 | `AWS_SESSION_TOKEN` | — | Session token for temporary AWS credentials |
@@ -541,6 +541,45 @@ Nomad executes the plugin once per secret fetch, so caching lives on disk:
   deploys and restarts keep working through short outages.
 - Cache entries are keyed by backend + token digest + reference, so values are
   never shared across different servers, accounts, or tokens.
+- On a cold cache, concurrent fetches of the *same* reference are collapsed into
+  one. See [Concurrent fetches](#concurrent-fetches) below.
+
+### Concurrent fetches
+
+A deploy starts every task at once, and Nomad execs the plugin once per
+`secret {}` block — so several plugin processes race for the same references
+against a cache that is cold, because the TTL is much shorter than the gap
+between deploys. Left alone, each of them resolves every reference itself.
+
+On the service-account backend that is far more expensive than the network call
+it performs. The 1Password SDK runs 1Password's core as an embedded WebAssembly
+module, and compiling it is CPU-bound work that a context cannot interrupt. It
+is cached within a process but not across them, so each process pays it again —
+concurrently, competing for the same vCPUs. On a small burstable instance the
+fetch then overruns Nomad's 60-second kill, and all the operator sees is:
+
+```
+Task hook failed: secrets: failed to fetch secret from plugin app: signal: terminated
+```
+
+So the plugin takes an advisory lock (`flock`) on each reference before
+resolving it, and re-reads the cache once it holds the lock. The first process
+resolves and caches; the rest read what it wrote. The SDK client is built lazily
+on first resolve, so a process whose references all come from the cache never
+builds one — the compile happens once per deploy rather than once per secret
+block.
+
+The lock is best-effort and never fails a fetch: if the filesystem doesn't
+support advisory locking, or the wait runs out the fetch's budget, the plugin
+resolves unlocked. One lock is held at a time and released before the next
+reference, so processes fetching overlapping references in different orders
+cannot deadlock, and the kernel drops a `flock` when its process exits, so a
+crashed holder can't wedge the cache.
+
+If a cold-cache deploy is still marginal on a small instance, raise
+`OP_CACHE_TTL` past the interval between deploys (`24h`) so deploys hit a warm
+cache and never construct the SDK client at all — and clear
+`OP_CACHE_DIR` after rotating a secret.
 
 Consequence of caching: after rotating a secret, clients may serve the old value
 for up to the TTL. Set `OP_CACHE_TTL=0` in the host config if you always want a
@@ -593,11 +632,11 @@ To dig deeper, run the diagnostic on the client node:
 ```sh
 # verify config, backend, cache, connectivity, and token scope
 $ remote-secrets check
-remote-secrets provider v1.0.3 — diagnostic
+remote-secrets provider v1.1.0 — diagnostic
 
 OK   config loaded from: /etc/remote-secrets/config.env
 OK   backend: 1Password service account
-     request timeout 30s, cache TTL 5m0s, max stale 24h0m0s
+     request timeout 45s, cache TTL 5m0s, max stale 24h0m0s
 OK   cache: /var/cache/remote-secrets
 OK   connectivity: 2 vault(s) visible: Infrastructure, Production
 
@@ -614,6 +653,29 @@ so it also works as a provisioning smoke test.
 Warnings that don't fail a fetch (stale cache served during an outage,
 unwritable cache directory) go to the plugin's stderr, which lands in the
 **Nomad client agent logs** on that node.
+
+### `signal: terminated`
+
+```
+Task hook failed: secrets: failed to fetch secret from plugin app: signal: terminated
+```
+
+This one message is not the plugin's. `signal: terminated` is SIGTERM, which is
+Nomad killing the fetch at its 60-second limit — every failure the plugin can
+detect is reported as a self-contained JSON error naming the reference and the
+backend, never as a signal. So it means the plugin was still working when the
+window closed.
+
+From v1.1.0 the plugin gives up at `OP_REQUEST_TIMEOUT` (45s by default, under
+Nomad's limit) and reports which reference it was resolving, so this should be
+rare. If you still see it:
+
+- **Several tasks starting at once on a small instance.** The usual cause, and
+  what [Concurrent fetches](#concurrent-fetches) describes. Raise `OP_CACHE_TTL`
+  past the interval between deploys so deploys hit a warm cache.
+- **An older plugin version.** Check with
+  `nomad node status -verbose <node> | grep remote-secrets`.
+- **A slow or unreachable backend.** Run `remote-secrets check` on the node.
 
 ### Nomad can't find the plugin
 

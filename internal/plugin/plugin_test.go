@@ -3,11 +3,15 @@ package plugin
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/octdanb/nomad-remote-secrets/internal/provider/onepassword/connect"
 )
@@ -224,6 +228,96 @@ func TestFetchMultiSharesCache(t *testing.T) {
 	}
 	if resp.Result["pw"] != "hunter2" {
 		t.Fatalf("result = %v", resp.Result)
+	}
+}
+
+// countingConnect is fakeConnect with a stall on the item read and a tally of
+// how many times it was read, so a test can tell one resolve from several.
+func countingConnect(t *testing.T, stall time.Duration, reads *atomic.Int32) *httptest.Server {
+	t.Helper()
+	inner := fakeConnect(t)
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/items/"+itemID) {
+			reads.Add(1)
+			time.Sleep(stall)
+		}
+		req, _ := http.NewRequest(r.Method, inner.URL+r.URL.RequestURI(), nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
+	}))
+	t.Cleanup(proxy.Close)
+	return proxy
+}
+
+func TestFetchResolvesOnceAcrossConcurrentProcesses(t *testing.T) {
+	// Arrange - a deploy execs this binary once per secret{} block, so several
+	// fetches of the same reference start at the same instant against a cold
+	// cache. Only the first should reach the backend; on the service-account
+	// backend every extra resolve also means another WebAssembly compile, and
+	// that contention is what pushes a fetch past Nomad's 60-second kill.
+	var reads atomic.Int32
+	srv := countingConnect(t, 150*time.Millisecond, &reads)
+	setupEnv(t, srv.URL)
+
+	const processes = 5
+
+	// Act
+	var wg sync.WaitGroup
+	results := make([]fetchResponse, processes)
+	for i := range processes {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var stdout, stderr bytes.Buffer
+			Fetch(&stdout, &stderr, "op://Prod/database/password")
+			json.Unmarshal(stdout.Bytes(), &results[i])
+		}()
+	}
+	wg.Wait()
+
+	// Assert - every caller gets the value, from a single backend read.
+	for i, resp := range results {
+		if resp.Error != "" {
+			t.Fatalf("fetch %d failed: %s", i, resp.Error)
+		}
+		if resp.Result["value"] != "hunter2" {
+			t.Fatalf("fetch %d result = %v", i, resp.Result)
+		}
+	}
+	if got := reads.Load(); got != 1 {
+		t.Fatalf("backend read %d times, want 1", got)
+	}
+}
+
+func TestFetchReportsTimeoutRatherThanHanging(t *testing.T) {
+	// Arrange - a backend slower than the plugin's budget. Nomad would
+	// otherwise SIGTERM the process and report only "signal: terminated",
+	// naming neither the reference nor the reason.
+	var reads atomic.Int32
+	srv := countingConnect(t, 2*time.Second, &reads)
+	setupEnv(t, srv.URL)
+	t.Setenv("OP_REQUEST_TIMEOUT", "200ms")
+
+	// Act
+	start := time.Now()
+	resp := runFetch(t, "op://Prod/database/password")
+	elapsed := time.Since(start)
+
+	// Assert
+	if resp.Error == "" {
+		t.Fatal("want a timeout error, got success")
+	}
+	if !strings.Contains(resp.Error, "op://Prod/database/password") {
+		t.Fatalf("error %q does not name the reference", resp.Error)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("fetch took %v; it should give up at its own deadline", elapsed)
 	}
 }
 

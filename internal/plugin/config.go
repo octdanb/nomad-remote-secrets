@@ -22,7 +22,7 @@ type Config struct {
 	ServiceAccountToken string        // OP_SERVICE_ACCOUNT_TOKEN / OP_SERVICE_ACCOUNT_TOKEN_FILE
 	ConnectHost         string        // OP_CONNECT_HOST
 	Token               string        // OP_CONNECT_TOKEN / OP_CONNECT_TOKEN_FILE
-	Timeout             time.Duration // OP_REQUEST_TIMEOUT (default 30s)
+	Timeout             time.Duration // OP_REQUEST_TIMEOUT (default 45s)
 	CacheDir            string        // OP_CACHE_DIR
 	CacheTTL            time.Duration // OP_CACHE_TTL (default 5m, 0 disables)
 	MaxStale            time.Duration // OP_CACHE_MAX_STALE (default 24h, 0 disables fallback)
@@ -117,9 +117,14 @@ func LoadConfig(paths []string, getenv func(string) string) (Config, error) {
 	}
 
 	cfg := Config{
-		ConnectHost:  strings.TrimRight(lookup("OP_CONNECT_HOST"), "/"),
-		CacheDir:     DefaultCacheDir,
-		Timeout:      30 * time.Second,
+		ConnectHost: strings.TrimRight(lookup("OP_CONNECT_HOST"), "/"),
+		CacheDir:    DefaultCacheDir,
+		// Nomad SIGTERMs a secret fetch at 60 seconds. The plugin's own budget
+		// sits below that so a slow backend — or a first-use WebAssembly
+		// compile on a throttled instance — is reported as an error naming the
+		// reference, rather than as an opaque "signal: terminated". The
+		// remaining margin covers writing the response and Nomad reading it.
+		Timeout:      45 * time.Second,
 		CacheTTL:     5 * time.Minute,
 		MaxStale:     24 * time.Hour,
 		MaxFileBytes: 1 << 20, // 1 MiB

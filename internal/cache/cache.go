@@ -117,6 +117,13 @@ func (c *Cache) read(key string) (*entry, error) {
 }
 
 func (c *Cache) path(key string) string {
+	return c.pathFor(key, ".json")
+}
+
+// pathFor names a per-key file in the cache directory. The key is hashed so
+// that op:// paths never appear in a file name; the extension distinguishes
+// the entry itself from its lock (see lock.go).
+func (c *Cache) pathFor(key, ext string) string {
 	sum := sha256.Sum256([]byte(key))
-	return filepath.Join(c.dir, hex.EncodeToString(sum[:])+".json")
+	return filepath.Join(c.dir, hex.EncodeToString(sum[:])+ext)
 }
