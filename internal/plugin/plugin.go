@@ -25,7 +25,7 @@ import (
 
 // Version is reported to Nomad in the fingerprint response and used to
 // register the plugin on each client node.
-const Version = "1.0.3"
+const Version = "1.1.0"
 
 // ConfigPaths are the host configuration files consulted in order; the first
 // one that exists wins. Values from the host file take precedence over
@@ -214,12 +214,40 @@ func fetchOne(ctx context.Context, stderr io.Writer, cfg Config, store *cache.Ca
 	}
 
 	if store != nil && cacheable {
-		if values, ok := store.Get(cacheKey); ok {
-			return provider.Result{Values: values, Object: isObject(values)}, nil
+		if result, ok := cached(store, cacheKey); ok {
+			return result, nil
+		}
+
+		// Cold cache. Nomad execs this binary once per secret{} block, so a
+		// deploy starts several plugin processes at the same instant and every
+		// one of them would otherwise resolve every reference itself. On the
+		// 1Password service-account backend that is expensive out of all
+		// proportion to the network call: the SDK compiles its WebAssembly
+		// core on first use, which is CPU-bound work repeated per process. On
+		// a small burstable instance those concurrent compiles contend for the
+		// same one or two vCPUs and push the fetch past Nomad's 60-second
+		// kill, which the operator sees only as "signal: terminated".
+		//
+		// So take a cross-process lock on the reference and look again once
+		// it's held: the first process resolves and caches, the others read
+		// what it wrote. Because the SDK client is built lazily on first
+		// resolve (see onepassword.newSource), a process whose references all
+		// come from the cache never builds one at all — the compile happens
+		// once per deploy instead of once per secret block.
+		//
+		// One lock is held at a time and released before the next reference,
+		// so processes fetching overlapping references in different orders
+		// cannot deadlock.
+		release, locked := store.Lock(ctx, cacheKey)
+		defer release()
+		if locked {
+			if result, ok := cached(store, cacheKey); ok {
+				return result, nil
+			}
 		}
 	}
 
-	result, err := p.Resolve(ctx, ref)
+	result, err := resolveWithin(ctx, cfg, p, ref)
 	if err != nil {
 		if store != nil && cacheable && cfg.MaxStale > 0 {
 			if stale, age, ok := store.Stale(cacheKey, cfg.MaxStale); ok {
@@ -237,6 +265,48 @@ func fetchOne(ctx context.Context, stderr io.Writer, cfg Config, store *cache.Ca
 		}
 	}
 	return result, nil
+}
+
+// cached reads a fresh entry for key and reconstructs the Result around it.
+func cached(store *cache.Cache, key string) (provider.Result, bool) {
+	values, ok := store.Get(key)
+	if !ok {
+		return provider.Result{}, false
+	}
+	return provider.Result{Values: values, Object: isObject(values)}, true
+}
+
+// resolveWithin runs p.Resolve but gives up as soon as ctx is done, whether or
+// not the resolve itself has noticed.
+//
+// A context only cancels at an I/O checkpoint, and the 1Password SDK's first
+// call compiles its WebAssembly core: CPU-bound Go that no context can preempt.
+// When that outlasts Nomad's 60-second kill window the plugin is SIGTERMed
+// mid-compile and the operator is left with "signal: terminated" — a message
+// that names neither the reference nor the reason. Returning here instead lets
+// the normal error path report both, and lets a stale cache entry still rescue
+// the deploy.
+//
+// Abandoning the goroutine leaks it, which is acceptable precisely once: the
+// process is a one-shot fetch that exits as soon as this call returns. The
+// channel is buffered so the abandoned goroutine can still finish and exit.
+func resolveWithin(ctx context.Context, cfg Config, p provider.Provider, ref string) (provider.Result, error) {
+	type outcome struct {
+		result provider.Result
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		result, err := p.Resolve(ctx, ref)
+		done <- outcome{result: result, err: err}
+	}()
+
+	select {
+	case o := <-done:
+		return o.result, o.err
+	case <-ctx.Done():
+		return provider.Result{}, fmt.Errorf("resolving %s: gave up after %s (%w)", ref, cfg.Timeout, ctx.Err())
+	}
 }
 
 // isFile reports whether a value set is a file reference, i.e. it carries the

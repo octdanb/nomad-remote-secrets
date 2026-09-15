@@ -35,7 +35,9 @@ func TestLoadConfigFromEnv(t *testing.T) {
 	if cfg.Token != "tok" {
 		t.Errorf("token = %q", cfg.Token)
 	}
-	if cfg.CacheTTL != 5*time.Minute || cfg.MaxStale != 24*time.Hour || cfg.Timeout != 30*time.Second {
+	// The timeout default sits under Nomad's 60-second kill so a slow fetch is
+	// reported as an error rather than as "signal: terminated".
+	if cfg.CacheTTL != 5*time.Minute || cfg.MaxStale != 24*time.Hour || cfg.Timeout != 45*time.Second {
 		t.Errorf("defaults not applied: %+v", cfg)
 	}
 	if cfg.CacheDir != DefaultCacheDir {
